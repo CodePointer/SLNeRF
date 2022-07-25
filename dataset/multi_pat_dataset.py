@@ -56,7 +56,8 @@ class MultiPatDataset(torch.utils.data.Dataset):
 
     def get_bound(self):
         fx, fy, dx, dy = self.intrinsics
-        hei, wid = self.img_size
+        # hei, wid = self.img_size
+        wid, hei = self.img_size
         z_min, z_max = 300.0, 900.0
         x_min = (0.0 - dx) / fx * z_max
         x_max = (wid - dx) / fx * z_max
@@ -73,17 +74,19 @@ class MultiPatDataset(torch.utils.data.Dataset):
 
         return bound, center, scale
 
-    def get_uniform_ray(self, resolution_level=1):
+    def get_uniform_ray(self, resolution_level=1, device=None):
+        if device is None:
+            device = self.device
         l = resolution_level
         img_hei, img_wid = self.img_set.shape[-2:]
-        tx = torch.linspace(0, img_wid - 1, img_wid // l, device=self.device)
-        ty = torch.linspace(0, img_hei - 1, img_hei // l, device=self.device)
+        tx = torch.linspace(0, img_wid - 1, img_wid // l, device=device)
+        ty = torch.linspace(0, img_hei - 1, img_hei // l, device=device)
         wid = tx.shape[0]
         hei = ty.shape[0]
         pixels_x, pixels_y = torch.meshgrid(tx, ty)
         pixels_x = pixels_x.reshape(-1)
         pixels_y = pixels_y.reshape(-1)
-        fx, fy, dx, dy = self.intrinsics
+        fx, fy, dx, dy = self.intrinsics.to(device)
         p = torch.stack([
             (pixels_x - dx) / fx,
             (pixels_y - dy) / fy,

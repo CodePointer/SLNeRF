@@ -242,6 +242,7 @@ class Worker:
 
             # self.logging(f'Start testing epoch {epoch_num}. <{self.time_keeper}>', tag='epoch', step=epoch_num)
             self.test_epoch(epoch=epoch_num)
+            self.callback_after_test(epoch_num)
 
             # Save model
             if self.args.exp_type in ['train'] and epoch_num % self.args.model_stone == 0:
@@ -266,7 +267,11 @@ class Worker:
         return loss if return_val_only else ret
 
     def callback_after_train(self, epoch):
-        raise NotImplementedError(':callback_after_train() is not implemented by base class.')
+        # raise NotImplementedError(':callback_after_train() is not implemented by base class.')
+        pass
+
+    def callback_after_test(self, epoch):
+        pass
 
     def check_realtime_report(self, **kwargs):
         if self.args.debug_mode:

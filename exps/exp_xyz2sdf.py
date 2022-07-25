@@ -8,6 +8,9 @@ import torch.nn.functional as F
 import numpy as np
 from configparser import ConfigParser
 
+import trimesh
+from tqdm import tqdm
+
 from worker.worker import Worker
 import pointerlib as plb
 from dataset.multi_pat_dataset import MultiPatDataset
@@ -26,6 +29,7 @@ class ExpXyz2SdfWorker(Worker):
         super().__init__(args)
 
         # init_dataset()
+        self.pat_dataset = None
         self.sample_num = 512
         self.bound = None
         self.center_pt = None
@@ -52,7 +56,7 @@ class ExpXyz2SdfWorker(Worker):
         config = ConfigParser()
         config.read(str(self.train_dir / 'config.ini'), encoding='utf-8')
 
-        pat_dataset = MultiPatDataset(
+        self.pat_dataset = MultiPatDataset(
             scene_folder=self.train_dir,
             pat_idx_set=[0, 1, 2, 3, 4, 5, 6, 7],
             sample_num=self.sample_num,
@@ -65,19 +69,19 @@ class ExpXyz2SdfWorker(Worker):
 
         if self.args.exp_type == 'train':
             self.save_flag = False
-            self.train_dataset = pat_dataset
+            self.train_dataset = self.pat_dataset
         elif self.args.exp_type == 'eval':  # Without BP: TIDE
-            self.save_flag = self.args.save_res
-            self.test_dataset.append(pat_dataset)
+            self.save_flag = False
+            self.test_dataset.append(self.pat_dataset)
             self.res_writers.append(self.create_res_writers())
         else:
             raise NotImplementedError(f'Wrong exp_type: {self.args.exp_type}')
 
         # Init warp_layer
-        self.bound, self.center_pt, self.scale = self.train_dataset.get_bound()
+        self.bound, self.center_pt, self.scale = self.pat_dataset.get_bound()
         self.warp_layer = WarpFromXyz(
             calib_para=config['Calibration'],
-            pat_mat=self.train_dataset.pat_set,
+            pat_mat=self.pat_dataset.pat_set,
             bound=self.bound,
             device=self.device
         )
@@ -112,7 +116,8 @@ class ExpXyz2SdfWorker(Worker):
             n_samples=64,
             n_importance=64,
             up_sample_steps=4,
-            perturb=1.0
+            perturb=1.0,
+            bound=self.bound
         )
         self.logging(f'--networks: {",".join(self.networks.keys())}')
         self.logging(f'--networks-static: {",".join(self.network_static_list)}')
@@ -242,36 +247,103 @@ class ExpXyz2SdfWorker(Worker):
             Please write image to loss_writer and call flush().
         """
         pvf = plb.VisualFactory
+        resolution_level = 4
+
+        # TODO: 很奇怪。SDF的表面明显存在一些问题。尽管Weight是对的，但SDF场却是错的。
+        # TODO: 看一些PhaseShifting的算法。更换Pattern来看结果是否可行。
+        #       然后采集一些数据；包括全黑、全白、GrayCode、PhaseShifting，不同的PhaseShifting模式。
+        #       将这些都保存在Data当中，然后进行相应的计算。
 
         # image
-        img_input = self.train_dataset.img_set
-        rays_o, rays_d, img_size = self.train_dataset.get_uniform_ray(resolution_level=32)
-        render_out = self.renderer.render(rays_o, rays_d, self.bound, cos_anneal_ratio=self.anneal_ratio)
-        color_fine = render_out['color_fine']  # [N, C]
-
+        rays_o, rays_d, img_size = self.pat_dataset.get_uniform_ray(resolution_level=resolution_level)
+        rays_o_set = rays_o.split(self.sample_num)
+        rays_d_set = rays_d.split(self.sample_num)
+        out_rgb_fine = []
+        out_depth = []
+        out_pts = []
+        out_min_pts = []
+        for rays_o, rays_d in tqdm(zip(rays_o_set, rays_d_set)):
+            render_out = self.renderer.render(rays_o, rays_d, self.bound,
+                                              cos_anneal_ratio=self.anneal_ratio)
+            color_fine = render_out['color_fine']  # [N, C]
+            out_rgb_fine.append(color_fine.detach().cpu())
+            weights = render_out['weights']
+            mid_z_vals = render_out['mid_z_vals']
+            max_idx = torch.argmax(weights, dim=1)  # [N]
+            mid_z = mid_z_vals[torch.arange(max_idx.shape[0]), max_idx]
+            out_depth.append(mid_z.detach().cpu())
+            pts = render_out['pts'].detach().cpu()
+            out_pts.append(pts.reshape(-1, 3))
+            min_pts = pts[torch.arange(max_idx.shape[0]), max_idx]
+            out_min_pts.append(min_pts)
         img_hei, img_wid = img_size
+        img_set = torch.cat(out_rgb_fine, dim=0).permute(1, 0)
+        channel = img_set.shape[0]
         img_render_list = []
-        for c in range(color_fine.shape[1]):
-            img_fine = color_fine[:, c].reshape(img_hei, img_wid)
+        for c in range(channel):
+            img_fine = img_set[c].reshape(img_wid, img_hei).permute(1, 0)
             img_viz = pvf.img_visual(img_fine)
             img_render_list.append(img_viz)
+        depth_set = torch.cat(out_depth, dim=0)
+        depth_mat = depth_set.reshape(img_wid, img_hei).permute(1, 0)
+        plb.imviz(img_render_list[-1], 'img', 10)
+        plb.imviz(depth_mat, 'depth', 10, normalize=[300, 900])
 
-        # for c in range(color_fine.shape[1]):
-        #     img_viz = pvf.img_visual(img_input[c])
-        #     img_render_list.append(img_viz)
+        pts_set = torch.cat(out_pts, dim=0).numpy()
+        np.savetxt(str(self.res_dir / 'depth_query.asc'), pts_set,
+                   fmt='%.2f', delimiter=', ', newline='\n',
+                   encoding='utf-8')
+        min_pts_set = torch.cat(out_min_pts, dim=0).numpy()
+        np.savetxt(str(self.res_dir / 'depth_map.asc'), min_pts_set,
+                   fmt='%.2f', delimiter=', ', newline='\n',
+                   encoding='utf-8')
+        # with open(str(self.res_dir / 'depth_query.asc'), 'w+', encoding='utf-8') as file:
+        #     for pts in pts_set:
+        #         file.write(f'{pts[0]:.02f}, {pts[1]:.02f}, {pts[2]:.02f}\n')
+        print('depth_query finished.')
 
-        wrp_viz = pvf.img_concat(img_render_list, 1, color_fine.shape[1], transpose=True)
+        # channel = 8
+        # img_hei, img_wid = 240, 320
+        img_input = self.pat_dataset.img_set.unsqueeze(0).detach().cpu()
+        img_input_re = torch.nn.functional.interpolate(img_input, scale_factor=1 / resolution_level).squeeze()
+        for c in range(channel):
+            img_gt = img_input_re[c]
+            img_viz = pvf.img_visual(img_gt)
+            img_render_list.append(img_viz)
+        plb.imviz(img_render_list[-1], 'img_gt', 10)
+
+        wrp_viz = pvf.img_concat(img_render_list, 2, channel, transpose=False)
         self.loss_writer.add_image(f'{tag}/img_render', wrp_viz, step)
 
         # Mesh
-        vertices, triangles = self.renderer.extract_geometry(
-            self.bound[0],
-            self.bound[1],
-            resolution=64,
+        # mesh_bound = np.stack([np.min(pts_set, axis=0), np.max(pts_set, axis=0)])
+        # vertices, triangles, pts_set_sdf, pts_select = self.renderer.extract_geometry(
+        #     torch.from_numpy(mesh_bound).cuda(),
+        #     resolution=128,
+        #     threshold=0.0
+        # )
+        rays_o, rays_d, img_size = self.pat_dataset.get_uniform_ray(resolution_level=resolution_level)
+        vertices, triangles, pts_set_sdf, pts_select = self.renderer.extract_proj_geometry(
+            rays_d,
+            img_size,
+            self.bound,
+            z_resolution=128,
             threshold=0.0
         )
+
         vertices = torch.from_numpy(vertices.astype(np.float32)).unsqueeze(0)
         triangles = torch.from_numpy(triangles.astype(np.int32)).unsqueeze(0)
+        ver_color = self.warp_layer(vertices[0].cuda()).detach().cpu()
+        vertex_color = (ver_color[:, :1] * 255).numpy().astype(np.uint8).repeat(3, axis=1)
+        # face_color = np.zeros()
+        mesh = trimesh.Trimesh(vertices[0], triangles[0], vertex_colors=vertex_color)
+        mesh.export(str(self.res_dir / 'mesh.ply'))
         self.loss_writer.add_mesh(f'{tag}/mesh', vertices=vertices, faces=triangles, global_step=step)
+
+        np.savetxt(str(self.res_dir / 'sdf_query.asc'), pts_set_sdf.numpy(),
+                   fmt='%.2f', delimiter=', ', newline='\n', encoding='utf-8')
+        np.savetxt(str(self.res_dir / 'sdf_select.asc'), pts_select.numpy(),
+                   fmt='%.2f', delimiter=', ', newline='\n', encoding='utf-8')
+        print('sdf_query finished.')
 
         self.loss_writer.flush()

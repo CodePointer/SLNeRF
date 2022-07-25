@@ -173,34 +173,43 @@ class SingleVarianceNetwork(nn.Module):
 
 
 # This code was taken from NeuS: https://github.com/Totoro97/NeuS
-def extract_fields(bound_min, bound_max, resolution, query_func):
+def extract_fields(normalize_func, vol_bound, resolution, query_func):
     N = 64
+    bound_min, bound_max = vol_bound
     X = torch.linspace(bound_min[0], bound_max[0], resolution).split(N)
     Y = torch.linspace(bound_min[1], bound_max[1], resolution).split(N)
     Z = torch.linspace(bound_min[2], bound_max[2], resolution).split(N)
 
     u = np.zeros([resolution, resolution, resolution], dtype=np.float32)
+    pts_set = []
     with torch.no_grad():
         for xi, xs in enumerate(X):
             for yi, ys in enumerate(Y):
                 for zi, zs in enumerate(Z):
                     xx, yy, zz = torch.meshgrid(xs, ys, zs)
                     pts = torch.cat([xx.reshape(-1, 1), yy.reshape(-1, 1), zz.reshape(-1, 1)], dim=-1).to(bound_min.device)
+                    pts_set.append(pts.detach().cpu())
+                    pts = normalize_func(pts)
                     val = query_func(pts).reshape(len(xs), len(ys), len(zs)).detach().cpu().numpy()
                     u[xi * N: xi * N + len(xs), yi * N: yi * N + len(ys), zi * N: zi * N + len(zs)] = val
-    return u
+    pts_set = torch.cat(pts_set, dim=0)
+    return u, pts_set
 
 
 # This code was taken from NeuS: https://github.com/Totoro97/NeuS
-def extract_geometry(bound_min, bound_max, resolution, threshold, query_func):
+def extract_geometry(normalize_func, vol_bound, resolution, threshold, query_func):
     print('threshold: {}'.format(threshold))
-    u = extract_fields(bound_min, bound_max, resolution, query_func)
+    u, pts_set = extract_fields(normalize_func, vol_bound, resolution, query_func)
+    min_z_idx = np.argmin(np.abs(u), axis=2).reshape(resolution, resolution, 1, 1).repeat(3, axis=3)
+    pts_volume = pts_set.reshape(resolution, resolution, resolution, -1)
+    pts_select = np.take_along_axis(pts_volume, min_z_idx, axis=2)
     vertices, triangles = mcubes.marching_cubes(u, threshold)
+    bound_min, bound_max = vol_bound
     b_max_np = bound_max.detach().cpu().numpy()
     b_min_np = bound_min.detach().cpu().numpy()
 
     vertices = vertices / (resolution - 1.0) * (b_max_np - b_min_np)[None, :] + b_min_np[None, :]
-    return vertices, triangles
+    return vertices, triangles, pts_set, pts_select.reshape(-1, 3)
 
 
 # This code was taken from NeuS: https://github.com/Totoro97/NeuS
@@ -247,7 +256,8 @@ class NeuSLRenderer:
                  n_importance,
                  # n_outside,
                  up_sample_steps,
-                 perturb):
+                 perturb,
+                 bound):
         self.sdf_network = sdf_network
         self.deviation_network = deviation_network
         self.color_network = color_network
@@ -256,6 +266,8 @@ class NeuSLRenderer:
         # self.n_outside = n_outside
         self.up_sample_steps = up_sample_steps
         self.perturb = perturb
+
+        self.bound = bound
 
     def up_sample(self, rays_o, rays_d, z_vals, sdf, n_importance, inv_s):
         """
@@ -327,7 +339,6 @@ class NeuSLRenderer:
                     sdf_network,
                     deviation_network,
                     color_network,
-                    bound,
                     background_alpha=None,
                     background_sampled_color=None,
                     background_rgb=None,
@@ -342,9 +353,10 @@ class NeuSLRenderer:
         # Section midpoints
         pts = rays_o[:, None, :] + rays_d[:, None, :] * mid_z_vals[..., :, None]  # n_rays, n_samples, 3
         dirs = rays_d[:, None, :].expand(pts.shape)
+        pts_bk = pts.detach().cpu().clone()
 
         pts = pts.reshape(-1, 3)
-        pts = self.pts_normalize(pts, bound)
+        pts = self.pts_normalize(pts)
         dirs = dirs.reshape(-1, 3)
 
         sdf_nn_output = sdf_network(pts)
@@ -402,6 +414,7 @@ class NeuSLRenderer:
         gradient_error = (relax_inside_sphere * gradient_error).sum() / (relax_inside_sphere.sum() + 1e-5)
 
         return {
+            'pts': pts_bk,
             'color': color,
             'sdf': sdf,
             'dists': dists,
@@ -414,8 +427,8 @@ class NeuSLRenderer:
             'inside_sphere': inside_sphere
         }
 
-    def pts_normalize(self, pts, bound):
-        bound_min, bound_max = bound
+    def pts_normalize(self, pts):
+        bound_min, bound_max = self.bound
         scale = bound_max - bound_min
         center_pt = (bound_max + bound_min) / 2.0
         pts_normalized = (pts - center_pt) / scale * 2.0
@@ -456,7 +469,7 @@ class NeuSLRenderer:
         if self.n_importance > 0:
             with torch.no_grad():
                 pts = rays_o[:, None, :] + rays_d[:, None, :] * z_vals[..., :, None]
-                pts_n = self.pts_normalize(pts, bound)
+                pts_n = self.pts_normalize(pts)
                 sdf = self.sdf_network.sdf(pts_n.reshape(-1, 3)).reshape(batch_size, self.n_samples)
 
                 for i in range(self.up_sample_steps):
@@ -492,7 +505,6 @@ class NeuSLRenderer:
                                     self.sdf_network,
                                     self.deviation_network,
                                     self.color_network,
-                                    bound,
                                     background_rgb=background_rgb,
                                     background_alpha=background_alpha,
                                     background_sampled_color=background_sampled_color,
@@ -500,11 +512,13 @@ class NeuSLRenderer:
 
         color_fine = ret_fine['color']
         weights = ret_fine['weights']
+        mid_z_vals = ret_fine['mid_z_vals']
         weights_sum = weights.sum(dim=-1, keepdim=True)
         gradients = ret_fine['gradients']
         s_val = ret_fine['s_val'].reshape(batch_size, n_samples).mean(dim=-1, keepdim=True)
 
         return {
+            'pts': ret_fine['pts'],
             'color_fine': color_fine,
             's_val': s_val,
             'cdf_fine': ret_fine['cdf'],
@@ -512,13 +526,80 @@ class NeuSLRenderer:
             'weight_max': torch.max(weights, dim=-1, keepdim=True)[0],
             'gradients': gradients,
             'weights': weights,
+            'mid_z_vals': mid_z_vals,
             'gradient_error': ret_fine['gradient_error'],
             'inside_sphere': ret_fine['inside_sphere']
         }
 
-    def extract_geometry(self, bound_min, bound_max, resolution, threshold=0.0):
-        return extract_geometry(bound_min,
-                                bound_max,
+    def extract_geometry(self, vol_bound, resolution, threshold=0.0):
+        return extract_geometry(normalize_func=self.pts_normalize,
+                                vol_bound=vol_bound,
                                 resolution=resolution,
                                 threshold=threshold,
                                 query_func=lambda pts: -self.sdf_network.sdf(pts))
+
+    def extract_proj_geometry(self, rays_d, img_size, bound, z_resolution, threshold=0.0):
+        return extract_proj_geometry(normalize_func=self.pts_normalize,
+                                     rays_d=rays_d,
+                                     img_size=img_size,
+                                     bound=bound,
+                                     z_resolution=z_resolution,
+                                     threshold=threshold,
+                                     query_func=lambda pts: -self.sdf_network.sdf(pts))
+
+
+def extract_proj_geometry(normalize_func, rays_d, img_size, bound, z_resolution, threshold, query_func):
+    # print('threshold: {}'.format(threshold))
+
+    # 1. Extract projected fields
+    sample_n = 64
+
+    hei, wid = img_size
+    u_rays = torch.zeros([wid * hei, z_resolution])
+    z_vals = torch.linspace(0.0, 1.0, z_resolution, device=rays_d.device)
+    near, far = bound[0, 2], bound[1, 2]
+    near = near + 20.0
+    far = far - 20.0
+    z_vals = near + (far - near) * z_vals[None, :]
+    rays_d_set = rays_d.split(sample_n)
+
+    pts_set = []
+    with torch.no_grad():
+        for ui, rays_d in enumerate(rays_d_set):
+            pts = rays_d[:, None, :] * z_vals[..., :, None]
+            pts_set.append(pts.detach().cpu().reshape(-1, 3))
+            pts_n = normalize_func(pts)
+            val = query_func(pts_n.reshape(-1, 3)).detach().cpu()
+            val = val.reshape(sample_n, z_resolution)
+            # print(val.shape)
+            u_rays[ui * sample_n:ui * sample_n + len(rays_d), :] = val
+            # Fill u_rays here
+    pts_volume = torch.cat(pts_set, dim=0).reshape(wid, hei, z_resolution, 3).permute(1, 0, 2, 3)
+    u = u_rays.reshape([wid, hei, z_resolution]).permute(1, 0, 2)
+    u = u.numpy()
+
+    # u = np.zeros([hei, wid, z_resolution], dtype=np.float32)
+    # pts_set = []
+    # with torch.no_grad():
+    #     for xi, xs in enumerate(X):
+    #         for yi, ys in enumerate(Y):
+    #             for zi, zs in enumerate(Z):
+    #                 xx, yy, zz = torch.meshgrid(xs, ys, zs)
+    #                 pts = torch.cat([xx.reshape(-1, 1), yy.reshape(-1, 1), zz.reshape(-1, 1)], dim=-1).to(
+    #                     bound_min.device)
+    #                 pts_set.append(pts.detach().cpu())
+    #                 pts = normalize_func(pts)
+    #                 val = query_func(pts).reshape(len(xs), len(ys), len(zs)).detach().cpu().numpy()
+    #                 u[xi * N: xi * N + len(xs), yi * N: yi * N + len(ys), zi * N: zi * N + len(zs)] = val
+    # pts_set = torch.cat(pts_set, dim=0)
+
+    # u, pts_set = extract_fields(normalize_func, vol_bound, resolution, query_func)
+    min_z_idx = np.argmin(np.abs(u), axis=2).reshape([hei, wid, 1, 1]).repeat(3, axis=3)
+    pts_select = np.take_along_axis(pts_volume, min_z_idx, axis=2)
+
+    vertices, triangles = mcubes.marching_cubes(u, threshold)
+    # bound_min, bound_max = vol_bound
+    # b_max_np = bound_max.detach().cpu().numpy()
+    # b_min_np = bound_min.detach().cpu().numpy()
+    # vertices = vertices / (resolution - 1.0) * (b_max_np - b_min_np)[None, :] + b_min_np[None, :]
+    return vertices, triangles, pts_volume.reshape(-1, 3), pts_select.reshape(-1, 3)
