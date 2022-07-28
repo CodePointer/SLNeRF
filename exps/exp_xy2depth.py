@@ -222,7 +222,6 @@ class ExpXy2DepthWorker(Worker):
         img_wrp_list = []
         for s in range(multi_scale):
             depth_map = net_out[s]
-            # TODO: Visualize depth
             depth_map_viz = pvf.disp_visual(depth_map, range_val=[0.0, 1e3])
             depth_list.append(depth_map_viz)
             img_wrp = self.warp_layer(depth_mat=depth_map, src_mat=data['pat'])  # [N, C, Hi, Wi]

@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+import matplotlib.pyplot as plt
 import mcubes
 
 
@@ -150,16 +151,123 @@ class SDFNetwork(nn.Module):
 
     def gradient(self, x):
         x.requires_grad_(True)
-        y = self.sdf(x)
-        d_output = torch.ones_like(y, requires_grad=False, device=y.device)
-        gradients = torch.autograd.grad(
-            outputs=y,
-            inputs=x,
-            grad_outputs=d_output,
-            create_graph=True,
-            retain_graph=True,
-            only_inputs=True)[0]
+        with torch.enable_grad():
+            y = self.sdf(x)
+            d_output = torch.ones_like(y, requires_grad=False, device=y.device)
+            gradients = torch.autograd.grad(
+                outputs=y,
+                inputs=x,
+                grad_outputs=d_output,
+                create_graph=True,
+                retain_graph=True,
+                only_inputs=True)[0]
         return gradients.unsqueeze(1)
+
+    def gradient_ray(self, z, ray):
+        z.requires_grad_(True)
+        with torch.enable_grad():
+            x = ray[:, None, :] * z[..., :, None]
+            y = self.sdf(x.reshape(-1, 3))
+            y = torch.sigmoid(y)
+            d_output = torch.ones_like(y, requires_grad=False, device=y.device)
+            gradients = torch.autograd.grad(
+                outputs=y,
+                inputs=z,
+                grad_outputs=d_output,
+                create_graph=True,
+                retain_graph=True,
+                only_inputs=True)[0]
+        return gradients.unsqueeze(1)
+
+
+class DensityNetwork(nn.Module):
+    def __init__(self,
+                 d_in,
+                 d_out,
+                 d_hidden,
+                 n_layers,
+                 skip_in=(4,),
+                 multires=0,
+                 bias=0.5,
+                 scale=1,
+                 geometric_init=True,
+                 weight_norm=True,
+                 inside_outside=False):
+        super(DensityNetwork, self).__init__()
+
+        dims = [d_in] + [d_hidden for _ in range(n_layers)] + [d_out]
+
+        self.embed_fn_fine = None
+
+        if multires > 0:
+            embed_fn, input_ch = Embedder.create(multires, input_dims=d_in)
+            self.embed_fn_fine = embed_fn
+            dims[0] = input_ch
+
+        self.num_layers = len(dims)
+        self.skip_in = skip_in
+        self.scale = scale
+
+        for l in range(0, self.num_layers - 1):
+            if l + 1 in self.skip_in:
+                out_dim = dims[l + 1] - dims[0]
+            else:
+                out_dim = dims[l + 1]
+
+            lin = nn.Linear(dims[l], out_dim)
+
+            if geometric_init:
+                if l == self.num_layers - 2:
+                    if not inside_outside:
+                        torch.nn.init.normal_(lin.weight, mean=np.sqrt(np.pi) / np.sqrt(dims[l]), std=0.0001)
+                        torch.nn.init.constant_(lin.bias, -bias)
+                    else:
+                        torch.nn.init.normal_(lin.weight, mean=-np.sqrt(np.pi) / np.sqrt(dims[l]), std=0.0001)
+                        torch.nn.init.constant_(lin.bias, bias)
+                elif multires > 0 and l == 0:
+                    torch.nn.init.constant_(lin.bias, 0.0)
+                    torch.nn.init.constant_(lin.weight[:, 3:], 0.0)
+                    torch.nn.init.normal_(lin.weight[:, :3], 0.0, np.sqrt(2) / np.sqrt(out_dim))
+                elif multires > 0 and l in self.skip_in:
+                    torch.nn.init.constant_(lin.bias, 0.0)
+                    torch.nn.init.normal_(lin.weight, 0.0, np.sqrt(2) / np.sqrt(out_dim))
+                    torch.nn.init.constant_(lin.weight[:, -(dims[0] - 3):], 0.0)
+                else:
+                    torch.nn.init.constant_(lin.bias, 0.0)
+                    torch.nn.init.normal_(lin.weight, 0.0, np.sqrt(2) / np.sqrt(out_dim))
+
+            if weight_norm:
+                lin = nn.utils.weight_norm(lin)
+
+            setattr(self, "lin" + str(l), lin)
+
+        self.activation = nn.Softplus(beta=100)
+
+    def forward(self, inputs):
+        inputs = inputs * self.scale
+        if self.embed_fn_fine is not None:
+            inputs = self.embed_fn_fine(inputs)
+
+        x = inputs
+        for l in range(0, self.num_layers - 1):
+            lin = getattr(self, "lin" + str(l))
+
+            if l in self.skip_in:
+                x = torch.cat([x, inputs], 1) / np.sqrt(2)
+
+            x = lin(x)
+
+            if l < self.num_layers - 2:
+                x = self.activation(x)
+
+        return torch.nn.functional.relu(x / self.scale)
+        # return torch.cat([x[:, :1] / self.scale, x[:, 1:]], dim=-1)
+
+    def sdf(self, x):
+        return self.forward(x)
+
+    def sdf_hidden_appearance(self, x):
+        return self.forward(x)
 
 
 # This code was taken from NeuS: https://github.com/Totoro97/NeuS
@@ -311,14 +419,36 @@ class NeuSLRenderer:
         alpha = (prev_cdf - next_cdf + 1e-5) / (prev_cdf + 1e-5)
         weights = alpha * torch.cumprod(
             torch.cat([torch.ones([batch_size, 1], device=rays_d.device), 1. - alpha + 1e-7], -1), -1)[:, :-1]
-
         z_samples = sample_pdf(z_vals, weights, n_importance, det=True).detach()
         return z_samples
 
-    def cat_z_vals(self, rays_o, rays_d, z_vals, new_z_vals, sdf, last=False):
+    def density2weights(self, z_vals, density, z_steps=None):
+        # act_func = torch.nn.functional.relu
+        if z_steps is None:
+            z_steps = torch.cat([
+                torch.zeros_like(z_vals[:, :1]),
+                z_vals[:, 1:] - z_vals[:, :-1],
+            ], dim=1)
+        alpha = 1.0 - torch.exp(- density * z_steps)
+        acc_trans = torch.cumprod(torch.cat([
+            torch.ones_like(alpha[:, :1]),
+            (1.0 - alpha + 1e-7),
+        ], dim=1), dim=1)[:, :-1]
+        weights = alpha * acc_trans
+        return weights
+
+    def up_sample_density(self, z_vals, density, n_importance):
+        """
+        Up sampling give a fixed inv_s
+        """
+        weights = self.density2weights(z_vals, density)[:, :-1]
+        z_samples = sample_pdf(z_vals, weights, n_importance, det=True).detach()
+        return z_samples
+
+    def cat_z_vals(self, rays_d, z_vals, new_z_vals, sdf, last=False):
         batch_size, n_samples = z_vals.shape
         _, n_importance = new_z_vals.shape
-        pts = rays_o[:, None, :] + rays_d[:, None, :] * new_z_vals[..., :, None]
+        pts = rays_d[:, None, :] * new_z_vals[..., :, None]
         z_vals = torch.cat([z_vals, new_z_vals], dim=-1)
         z_vals, index = torch.sort(z_vals, dim=-1)
 
@@ -392,7 +522,7 @@ class NeuSLRenderer:
         inside_sphere = (pts_norm < 1.0).float().detach()
         relax_inside_sphere = (pts_norm < 1.2).float().detach()
 
-        # Render with background TODO: 这里我直接把background去除了。
+        # Render with background 这里我直接把background去除了。
         # if background_alpha is not None:
         #     alpha = alpha * inside_sphere + background_alpha[:, :n_samples] * (1.0 - inside_sphere)
         #     alpha = torch.cat([alpha, background_alpha[:, n_samples:]], dim=-1)
@@ -412,6 +542,75 @@ class NeuSLRenderer:
         gradient_error = (torch.linalg.norm(gradients.reshape(batch_size, n_samples, 3), ord=2,
                                             dim=-1) - 1.0) ** 2
         gradient_error = (relax_inside_sphere * gradient_error).sum() / (relax_inside_sphere.sum() + 1e-5)
+
+        # DEBUG: check
+        query_idx = 120
+        z_val = mid_z_vals[query_idx].detach().cpu().numpy()
+        sdf_volume = sdf.view(mid_z_vals.shape[:2])
+        wei_val = weights[query_idx].detach().cpu().numpy()
+
+        sigmoid_val = torch.sigmoid(sdf_volume)  # [N, C]
+        z_val_step = mid_z_vals[:, 1:] - mid_z_vals[:, :-1]
+        ntr = (sigmoid_val[:, :-1] - sigmoid_val[:, 1:]) / (z_val_step + 1e-7)
+        dentr = sigmoid_val[:, :-1]
+        alpha_dis = (ntr / dentr).clip(0.0, 1.0)  # [N, C - 1]
+        alpha_dis = torch.cat([
+            alpha_dis,
+            torch.zeros([batch_size, 1], device=rays_d.device)
+        ], dim=1)  # [N, C]
+        ntr_grad = sdf_network.gradient_ray(z=mid_z_vals, ray=rays_d).squeeze()
+        # alpha_dis = (ntr_grad / sigmoid_val).clip(0.0, 1.0)
+        # z_val_lst = mid_z_vals - 0.1
+        # pts_lst = (rays_d[:, None, :] * z_val_lst[..., :, None]).reshape(-1, 3)
+        # sdf_lst = sdf_network(self.pts_normalize(pts_lst))[:, :1].reshape(sdf_volume.shape)
+        # sigmoid_lst = torch.sigmoid(sdf_lst)
+        # ntr_lst = (sigmoid_lst - sigmoid_val) / 0.1
+
+        acc_trans = torch.cumprod(torch.cat([
+            torch.ones([batch_size, 1], device=rays_d.device),
+            (1 - alpha_dis) + 1e-7,
+        ], dim=1), dim=1)[:, 1:]
+        weight_dis = alpha_dis * acc_trans
+
+        sdf_val = sdf_volume[query_idx].detach().cpu().numpy()
+        if sdf_val.min() <= 0.05:
+            alpha_val = alpha[query_idx].detach().cpu().numpy()
+            # plt.plot(z_val, sdf_val)
+            # plt.plot(z_val, alpha_val)
+            a_dis = alpha_dis[query_idx].detach().cpu().numpy()
+            plt.plot(z_val, a_dis)
+            # plt.plot(z_val, wei_val)
+            w_dis = weight_dis[query_idx].detach().cpu().numpy()
+            plt.plot(z_val, w_dis)
+            plt.legend([
+                # 'sdf',
+                # 'alpha_con',
+                'alpha_dis',
+                # 'wei_con',
+                'wei_dis',
+            ])
+            plt.show()
+
+            plt.plot(z_val, sdf_val)
+            s_val = sigmoid_val[query_idx].detach().cpu().numpy()
+            plt.plot(z_val, s_val)
+            plt.legend([
+                'sdf',
+                'sigmoid',
+            ])
+            plt.show()
+
+            # NTR check
+            ntr_dis = ntr[query_idx].detach().cpu().numpy() / ntr[query_idx].sum().detach().cpu().numpy()
+            ntr_grd = ntr_grad[query_idx].detach().cpu().numpy() / ntr_grad[query_idx].sum().detach().cpu().numpy()
+            # ntr_lst_vec = ntr_lst[query_idx].detach().cpu().numpy() / ntr_lst[query_idx].sum().detach().cpu().numpy()
+            plt.plot(z_val[:-1], ntr_dis)
+            plt.plot(z_val, ntr_grd)
+            # plt.plot(z_val, ntr_lst_vec)
+            plt.legend(['ntr_dis', 'ntr_grd'])
+            plt.show()
+
+            print('ploted.')
 
         return {
             'pts': pts_bk,
@@ -531,6 +730,71 @@ class NeuSLRenderer:
             'inside_sphere': ret_fine['inside_sphere']
         }
 
+    def render_density(self, rays_d):
+        batch_size = len(rays_d)
+        z_vals = torch.linspace(0.0, 1.0, self.n_samples, device=rays_d.device)
+        near, far = self.bound[0, 2], self.bound[1, 2]
+        z_vals = near + (far - near) * z_vals[None, :]
+
+        perturb = self.perturb
+        if perturb > 0:
+            t_rand = (torch.rand([batch_size, 1], device=rays_d.device) - 0.5)
+            z_vals = z_vals + t_rand * 2.0 / self.n_samples
+
+        # Up sample
+        if self.n_importance > 0:
+            with torch.no_grad():
+                pts = rays_d[:, None, :] * z_vals[..., :, None]
+                pts_n = self.pts_normalize(pts)
+                sdf = self.sdf_network.sdf(pts_n.reshape(-1, 3)).reshape(batch_size, self.n_samples)
+
+                for i in range(self.up_sample_steps):
+                    new_z_vals = self.up_sample_density(z_vals,
+                                                        sdf,
+                                                        self.n_importance // self.up_sample_steps)
+                    z_vals, sdf = self.cat_z_vals(rays_d,
+                                                  z_vals,
+                                                  new_z_vals,
+                                                  sdf,
+                                                  last=(i + 1 == self.up_sample_steps))
+
+        # Render core
+        batch_size, n_samples = z_vals.shape  # [N, C]
+
+        # Section length
+        mid_z_vals = z_vals
+
+        # Section midpoints
+        pts = rays_d[:, None, :] * mid_z_vals[..., :, None]  # n_rays, n_samples, 3
+        pts = pts.reshape(-1, 3)
+        pts_n = self.pts_normalize(pts)
+
+        density = self.sdf_network(pts_n).reshape(z_vals.shape)
+        sampled_color = self.color_network(pts_n).reshape(batch_size, n_samples, -1)
+
+        weights = self.density2weights(z_vals=z_vals, density=density)
+
+        # Check
+        # query_idx = 120
+        # den_norm = density[query_idx].detach().cpu().numpy()
+        # den_norm = den_norm / np.sum(den_norm)
+        # wei = weights[query_idx].detach().cpu().numpy()
+        # z_val = z_vals[query_idx].detach().cpu().numpy()
+        # plt.plot(z_val, den_norm)
+        # plt.plot(z_val, wei)
+        # plt.legend(['density', 'weight'])
+        # plt.show()
+
+        color = (sampled_color * weights[:, :, None]).sum(dim=1)
+
+        return {
+            'pts': pts,
+            'color': color,
+            'density': density,
+            'z_vals': mid_z_vals,
+            'weights': weights,
+        }
+
     def extract_geometry(self, vol_bound, resolution, threshold=0.0):
         return extract_geometry(normalize_func=self.pts_normalize,
                                 vol_bound=vol_bound,
@@ -603,3 +867,4 @@ def extract_proj_geometry(normalize_func, rays_d, img_size, bound, z_resolution,
     # b_min_np = bound_min.detach().cpu().numpy()
     # vertices = vertices / (resolution - 1.0) * (b_max_np - b_min_np)[None, :] + b_min_np[None, :]
     return vertices, triangles, pts_volume.reshape(-1, 3), pts_select.reshape(-1, 3)
+
