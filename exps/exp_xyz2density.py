@@ -55,7 +55,8 @@ class ExpXyz2DensityWorker(Worker):
 
         self.pat_dataset = MultiPatDataset(
             scene_folder=self.train_dir,
-            pat_idx_set=[0, 1, 2, 3, 4, 5, 6, 7],
+            # pat_idx_set=[0, 1, 2, 3, 4, 5, 6, 7],
+            pat_idx_set=[11],
             sample_num=self.sample_num,
             calib_para=config['Calibration'],
             device=self.device
@@ -277,7 +278,7 @@ class ExpXyz2DensityWorker(Worker):
         #            encoding='utf-8')
 
         img_input = self.pat_dataset.img_set.unsqueeze(0).detach().cpu()
-        img_input_re = torch.nn.functional.interpolate(img_input, scale_factor=1 / resolution_level).squeeze()
+        img_input_re = torch.nn.functional.interpolate(img_input, scale_factor=1 / resolution_level).squeeze(dim=0)
         for c in range(channel):
             img_gt = img_input_re[c]
             img_viz = pvf.img_visual(img_gt)
@@ -291,7 +292,7 @@ class ExpXyz2DensityWorker(Worker):
         depth_viz = pvf.disp_visual(depth_mat, range_val=self.bound[:, 2].to(depth_mat.device))
         self.loss_writer.add_image(f'{tag}/depth_map', depth_viz, step)
 
-        # plb.imviz(depth_mat, 'depth', 10, normalize=[300, 900])
+        # plb.imviz(depth_mat, 'depth', 0, normalize=[300, 900])
 
         # Mesh
         # mesh_bound = np.stack([np.min(pts_set, axis=0), np.max(pts_set, axis=0)])

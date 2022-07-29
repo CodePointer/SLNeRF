@@ -766,8 +766,7 @@ class NeuSLRenderer:
 
         # Section midpoints
         pts = rays_d[:, None, :] * mid_z_vals[..., :, None]  # n_rays, n_samples, 3
-        pts = pts.reshape(-1, 3)
-        pts_n = self.pts_normalize(pts)
+        pts_n = self.pts_normalize(pts.reshape(-1, 3))
 
         density = self.sdf_network(pts_n).reshape(z_vals.shape)
         sampled_color = self.color_network(pts_n).reshape(batch_size, n_samples, -1)

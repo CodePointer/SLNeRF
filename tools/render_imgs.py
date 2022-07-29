@@ -92,24 +92,24 @@ def load_render(folder):  # TODO: 标定参数还是有很多小问题。先跳�
     config = ConfigParser()
     config.read(str(folder / 'config.ini'), encoding='utf-8')
 
-    ext_tran = plb.str2array(config['Calibration']['ext_tran'], np.float32)
-    target_pt = np.array([0.0, 100.0, 800.0], dtype=np.float32)
-    look = target_pt - ext_tran
-    up = np.array([0.0, -1.0, 0.0], dtype=np.float32)
-    z_vec = look / np.linalg.norm(look)
-    right = np.cross(look, up)
-    x_vec = right / np.linalg.norm(right)
-    y_vec = np.cross(z_vec, x_vec)
-    rot_mat = np.stack([x_vec, y_vec, z_vec], axis=1)
-    rot_str = ','.join([str(x) for x in rot_mat.reshape(-1)])
-    config['Calibration']['ext_rot'] = rot_str
+    # ext_tran = plb.str2array(config['Calibration']['ext_tran'], np.float32)
+    # target_pt = np.array([0.0, 100.0, 800.0], dtype=np.float32)
+    # look = target_pt - ext_tran
+    # up = np.array([0.0, -1.0, 0.0], dtype=np.float32)
+    # z_vec = look / np.linalg.norm(look)
+    # right = np.cross(look, up)
+    # x_vec = right / np.linalg.norm(right)
+    # y_vec = np.cross(z_vec, x_vec)
+    # rot_mat = np.stack([x_vec, y_vec, z_vec], axis=1)
+    # rot_str = ','.join([str(x) for x in rot_mat.reshape(-1)])
+    # config['Calibration']['ext_rot'] = rot_str
 
     depth2uv = CoordCompute(config['Calibration'])
 
     # load img, depth
-    scene_list = plb.subfolders(folder)
+    # scene_list = plb.subfolders(folder)
 
-    scene_folder = scene_list[0]
+    scene_folder = folder
     depth = plb.imload(scene_folder / 'depth' / f'depth_0.png', scale=10.0).squeeze(0)
     uu, vv = depth2uv(depth)
     warp_layer = WarpLayer2D()
@@ -117,8 +117,8 @@ def load_render(folder):  # TODO: 标定参数还是有很多小问题。先跳�
     for pat_idx in range(pat_num):
         pat = plb.imload(scene_folder / 'pat' / f'pat_{pat_idx}.png')
         img = warp_layer(uu, vv, pat, mask_flag=True)
-        plb.imviz(img, 'img', 0)
-        plb.imsave(scene_folder / 'img' / f'img_{pat_idx}.png', img)
+        plb.imviz(img[0], 'img', 0)
+        plb.imsave(scene_folder / 'img' / f'img_{pat_idx}.png', img[0])
 
 
 def main():

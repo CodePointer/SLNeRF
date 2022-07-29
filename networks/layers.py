@@ -138,7 +138,7 @@ class WarpFromXyz(torch.nn.Module):
             mask[mask < 1.0] = 0.0
             sample_mat *= mask
 
-        return sample_mat.squeeze().permute(1, 0)  # [N, C]
+        return sample_mat.squeeze(axis=3)[0].permute(1, 0)  # [N, C]
 
         # hei_s, wid_s = src_mat.shape[-2:]
         #
