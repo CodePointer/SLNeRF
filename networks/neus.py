@@ -325,6 +325,13 @@ def sample_pdf(bins, weights, n_samples, det=False):
     # This implementation is from NeRF
     # Get pdf
     weights = weights + 1e-5  # prevent nans
+
+    rad = 2
+    conv_win = 2 * rad + 1
+    weight = torch.ones([1, 1, conv_win], dtype=torch.float32, device=bins.device) / conv_win
+    avg_weights = torch.nn.functional.conv1d(weights.unsqueeze(0), weight, padding=0).squeeze(0)
+    weights = torch.cat([weights[..., :rad], avg_weights, weights[:, -rad:]], dim=-1)
+
     pdf = weights / torch.sum(weights, -1, keepdim=True)
     cdf = torch.cumsum(pdf, -1)
     cdf = torch.cat([torch.zeros_like(cdf[..., :1]), cdf], -1)
