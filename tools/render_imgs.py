@@ -121,8 +121,35 @@ def load_render(folder):  # TODO: 标定参数还是有很多小问题。先跳�
         plb.imsave(scene_folder / 'img' / f'img_{pat_idx}.png', img[0])
 
 
+# TODO: 先研究采样。
+#  1. 看看现在的效果如何？ -> 目前来看还凑合。但原本的sample逻辑还是会有细节上的问题。
+#  2. 考虑使用32个正常采样，剩下32个用来uniformly在最大值附近sample。
+def calculate_occlusion(depth_mat):
+    hei, wid = depth_mat.shape[-2:]
+    mask_occ = torch.zeros_like(depth_mat)
+
+    # TODO: 完成遮挡模式下的表示。可带可不带，可以先跳过这一步去下面一步。
+
+    # depth_cam -> depth_pro，带去重
+
+    # depth_pro -> mask_raw，用1来填充。
+
+    # erode和dilate。参考pointerlib下面的data_generation.py
+
+    # 展示mask，确定没有问题，保存。
+
+    pass
+
+
+# TODO: 完成mask之后进行渲染。有了结果之后放到原来的network里面进行训练，判断是否可行。
+
+# TODO：采集数据，在真实场景上进行学习和训练。
 def main():
-    folder = Path(r'C:\SLDataSet\20220617s')
+    folder = Path(r'C:\SLDataSet\20220817s')
+
+    depth = plb.imload(folder / 'depth' / 'depth_0.png', scale=10.0).squeeze(0)
+    calculate_occlusion(depth)
+
     load_render(folder)
     pass
 

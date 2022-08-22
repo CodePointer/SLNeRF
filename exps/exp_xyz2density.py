@@ -55,8 +55,8 @@ class ExpXyz2DensityWorker(Worker):
 
         self.pat_dataset = MultiPatDataset(
             scene_folder=self.train_dir,
-            # pat_idx_set=[0, 1, 2, 3, 4, 5, 6, 7],
-            pat_idx_set=[11],
+            pat_idx_set=[0, 2, 4, 6, 8, 10, 12, 14],
+            # pat_idx_set=[11],
             sample_num=self.sample_num,
             calib_para=config['Calibration'],
             device=self.device
@@ -292,9 +292,13 @@ class ExpXyz2DensityWorker(Worker):
         depth_viz = pvf.disp_visual(depth_mat, range_val=self.bound[:, 2].to(depth_mat.device))
         self.loss_writer.add_image(f'{tag}/depth_map', depth_viz, step)
 
+        # plb.imsave(self.res_dir / 'depth.png', depth_mat, scale=10.0, img_type=np.uint16)
+        # plb.imsave(self.res_dir / 'depth_vis.png', depth_viz)
         # plb.imviz(depth_mat, 'depth', 0, normalize=[300, 900])
 
         # Mesh
+        vertices, triangles = plb.DepthMapVisual(depth_mat.unsqueeze(0), focus=2300.0 / resolution_level).to_mesh()
+        self.loss_writer.add_mesh(f'{tag}/mesh', vertices=vertices, faces=triangles, global_step=step)
         # mesh_bound = np.stack([np.min(pts_set, axis=0), np.max(pts_set, axis=0)])
         # vertices, triangles, pts_set_sdf, pts_select = self.renderer.extract_geometry(
         #     torch.from_numpy(mesh_bound).cuda(),

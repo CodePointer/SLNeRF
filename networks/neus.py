@@ -326,13 +326,54 @@ def sample_pdf(bins, weights, n_samples, det=False):
     # Get pdf
     weights = weights + 1e-5  # prevent nans
 
-    rad = 2
-    conv_win = 2 * rad + 1
-    weight = torch.ones([1, 1, conv_win], dtype=torch.float32, device=bins.device) / conv_win
-    avg_weights = torch.nn.functional.conv1d(weights.unsqueeze(0), weight, padding=0).squeeze(0)
-    weights = torch.cat([weights[..., :rad], avg_weights, weights[:, -rad:]], dim=-1)
+    # rad = 2
+    # conv_win = 2 * rad + 1
+    # kernel = torch.ones([1, 1, conv_win], dtype=torch.float32, device=bins.device) / conv_win
+    # weights_in = weights.reshape(-1, 1, weights.shape[-1])
+    # weights_out = torch.nn.functional.conv1d(weights_in, kernel, padding=0)
+    # weights_out = torch.cat([weights_in[..., :rad], weights_out, weights_in[..., -rad:]], dim=-1)
+    # weights = weights_out.reshape(weights.shape)
 
     pdf = weights / torch.sum(weights, -1, keepdim=True)
+    cdf = torch.cumsum(pdf, -1)
+    cdf = torch.cat([torch.zeros_like(cdf[..., :1]), cdf], -1)
+    # Take uniform samples
+    if det:
+        u = torch.linspace(0. + 0.5 / n_samples, 1. - 0.5 / n_samples, steps=n_samples, device=bins.device)
+        u = u.expand(list(cdf.shape[:-1]) + [n_samples])
+    else:
+        u = torch.rand(list(cdf.shape[:-1]) + [n_samples], device=bins.device)
+
+    # Invert CDF
+    u = u.contiguous()
+    inds = torch.searchsorted(cdf, u, right=True)
+    below = torch.max(torch.zeros_like(inds - 1), inds - 1)
+    above = torch.min((cdf.shape[-1] - 1) * torch.ones_like(inds), inds)
+    inds_g = torch.stack([below, above], -1)  # (batch, N_samples, 2)
+
+    matched_shape = [inds_g.shape[0], inds_g.shape[1], cdf.shape[-1]]
+    cdf_g = torch.gather(cdf.unsqueeze(1).expand(matched_shape), 2, inds_g)
+    bins_g = torch.gather(bins.unsqueeze(1).expand(matched_shape), 2, inds_g)
+
+    denom = (cdf_g[..., 1] - cdf_g[..., 0])
+    denom = torch.where(denom < 1e-5, torch.ones_like(denom), denom)
+    t = (u - cdf_g[..., 0]) / denom
+    samples = bins_g[..., 0] + t * (bins_g[..., 1] - bins_g[..., 0])
+
+    return samples
+
+
+def sample_pdf_avg(bins, weights, n_samples, det=False):
+    """
+    :param bins:    [1, K]
+    :param weights:     [1, K]. The weight of every bin edges.
+    :param n_samples:
+    :param det:
+    :return:
+    """
+    # Get pdf
+    weight_bin = (weights[..., :1] + weights[..., :-1]) * 0.5  # [1, K-1]
+    pdf = weight_bin / torch.sum(weight_bin, -1, keepdim=True)
     cdf = torch.cumsum(pdf, -1)
     cdf = torch.cat([torch.zeros_like(cdf[..., :1]), cdf], -1)
     # Take uniform samples
@@ -429,13 +470,22 @@ class NeuSLRenderer:
         z_samples = sample_pdf(z_vals, weights, n_importance, det=True).detach()
         return z_samples
 
-    def density2weights(self, z_vals, density, z_steps=None):
+    @staticmethod
+    def density2weights(z_vals, density, z_steps=None):
         # act_func = torch.nn.functional.relu
         if z_steps is None:
-            z_steps = torch.cat([
-                torch.zeros_like(z_vals[:, :1]),
-                z_vals[:, 1:] - z_vals[:, :-1],
+            # z_steps = torch.cat([
+            #     torch.zeros_like(z_vals[:, :1]),
+            #     z_vals[:, 1:] - z_vals[:, :-1],
+            # ], dim=1)
+            z_mids = (z_vals[:, :-1] + z_vals[:, 1:]) * 0.5
+            z_bounds = torch.cat([
+                z_vals[:, :1],
+                z_mids,
+                z_vals[:, -1:]
             ], dim=1)
+            z_steps = z_bounds[:, 1:] - z_bounds[:, :-1]
+
         alpha = 1.0 - torch.exp(- density * z_steps)
         acc_trans = torch.cumprod(torch.cat([
             torch.ones_like(alpha[:, :1]),
@@ -448,8 +498,8 @@ class NeuSLRenderer:
         """
         Up sampling give a fixed inv_s
         """
-        weights = self.density2weights(z_vals, density)[:, :-1]
-        z_samples = sample_pdf(z_vals, weights, n_importance, det=True).detach()
+        weights = self.density2weights(z_vals, density)
+        z_samples = sample_pdf_avg(z_vals, weights, n_importance, det=True).detach()
         return z_samples
 
     def cat_z_vals(self, rays_d, z_vals, new_z_vals, sdf, last=False):
@@ -768,11 +818,8 @@ class NeuSLRenderer:
         # Render core
         batch_size, n_samples = z_vals.shape  # [N, C]
 
-        # Section length
-        mid_z_vals = z_vals
-
         # Section midpoints
-        pts = rays_d[:, None, :] * mid_z_vals[..., :, None]  # n_rays, n_samples, 3
+        pts = rays_d[:, None, :] * z_vals[..., :, None]  # n_rays, n_samples, 3
         pts_n = self.pts_normalize(pts.reshape(-1, 3))
 
         density = self.sdf_network(pts_n).reshape(z_vals.shape)
@@ -797,7 +844,7 @@ class NeuSLRenderer:
             'pts': pts,
             'color': color,
             'density': density,
-            'z_vals': mid_z_vals,
+            'z_vals': z_vals,
             'weights': weights,
         }
 
