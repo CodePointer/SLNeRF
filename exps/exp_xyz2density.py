@@ -43,6 +43,12 @@ class ExpXyz2DensityWorker(Worker):
         self.anneal_ratio = 1.0
         self.anneal_end = 50000
 
+        self.alpha_set = []
+        for pair_str in args.alpha_stone.split(';'):
+            epoch_idx, value = pair_str.split(',')
+            self.alpha_set.append([int(epoch_idx), float(value)])
+        self.alpha = self.alpha_set[0][1]
+
     def init_dataset(self):
         """
             Requires:
@@ -146,7 +152,7 @@ class ExpXyz2DensityWorker(Worker):
             How networks process input data and give out network output.
             The output will be passed to :loss_forward().
         """
-        render_out = self.renderer.render_density(data['rays_v'])
+        render_out = self.renderer.render_density(data['rays_v'], alpha=self.alpha)
         return render_out['color']
 
     def loss_forward(self, net_out, data):
@@ -171,6 +177,10 @@ class ExpXyz2DensityWorker(Worker):
 
         # anneal_ratio
         self.anneal_ratio = np.min([1.0, epoch / self.anneal_end])
+        for alpha_pair in self.alpha_set:
+            if alpha_pair[0] > epoch:
+                break
+            self.alpha = alpha_pair[1]
 
     def callback_save_res(self, data, net_out, dataset, res_writer):
         """
@@ -243,7 +253,7 @@ class ExpXyz2DensityWorker(Worker):
         # out_pts = []
         # out_min_pts = []
         for rays_o, rays_d in zip(rays_o_set, rays_d_set):
-            render_out = self.renderer.render_density(rays_d)
+            render_out = self.renderer.render_density(rays_d, alpha=self.alpha)
             color_fine = render_out['color']  # [N, C]
             out_rgb_fine.append(color_fine.detach().cpu())
 

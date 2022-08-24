@@ -94,6 +94,10 @@ def get_args():
                         help='How many iters for res writing.',
                         default=8,
                         type=int)
+    parser.add_argument('--alpha_stone',
+                        help='alpha value & shrink epoch',
+                        default='0,1.0',
+                        type=str)
 
     args = parser.parse_args()
     return args

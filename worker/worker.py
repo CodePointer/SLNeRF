@@ -361,6 +361,9 @@ class Worker:
             self.networks[name] = self.networks[name].to(self.device)
             self.networks[name].train()
 
+        if epoch == 11:
+            print(epoch)
+
         self.stopwatch.start('total')
         for idx, data in enumerate(train_loader):
 

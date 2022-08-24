@@ -372,6 +372,7 @@ def sample_pdf_avg(bins, weights, n_samples, det=False):
     :return:
     """
     # Get pdf
+    weights = weights + 1e-5  # prevent nans
     weight_bin = (weights[..., :1] + weights[..., :-1]) * 0.5  # [1, K-1]
     pdf = weight_bin / torch.sum(weight_bin, -1, keepdim=True)
     cdf = torch.cumsum(pdf, -1)
@@ -400,6 +401,41 @@ def sample_pdf_avg(bins, weights, n_samples, det=False):
     samples = bins_g[..., 0] + t * (bins_g[..., 1] - bins_g[..., 0])
 
     return samples
+
+
+def sample_pdf_uni(bins, weights, n_samples, alpha=1.0):
+    """
+    :param bins:    [1, K]
+    :param weights:     [1, K]. The weight of every bin edges.
+    :param n_samples:
+    :param det:
+    :return:
+    """
+    # max_idx for sample.
+    sample_range = torch.arange(0, n_samples * alpha, alpha) - 0.5 * n_samples * alpha
+    sample_range = sample_range.unsqueeze(0).to(bins.device)
+    max_idx = torch.argmax(weights, dim=1)
+    sample_val = bins[torch.arange(0, bins.shape[0]), max_idx].unsqueeze(1) + sample_range
+
+    # Fill max, min
+    min_set = bins[:, :1] + (sample_range + 0.5 * n_samples * alpha)
+    max_set = bins[:, -1:] + (sample_range - 0.5 * n_samples * alpha)
+    sample_min, _ = torch.min(sample_val, dim=1)
+    sample_val[sample_min < bins[:, 0]] = min_set[sample_min < bins[:, 0]]
+    sample_max, _ = torch.max(sample_val, dim=1)
+    sample_val[sample_max > bins[:, -1]] = max_set[sample_max > bins[:, -1]]
+
+    # Average sample for min == max
+    max_min_thd = 0.01
+    max_val, _ = torch.max(weights, dim=1)
+    min_val, _ = torch.min(weights, dim=1)
+    avg_mask = (max_val - min_val <= max_min_thd)
+    mid_sample = torch.linspace(0.5 * (bins[0, 0] + bins[0, 1]), 0.5 * (bins[0, -2] + bins[0, -1]), n_samples)
+    mid_sample = mid_sample.unsqueeze(0).to(bins.device)
+
+    sample_val[avg_mask] = mid_sample
+
+    return sample_val
 
 
 # This code was modified based on NeuS: https://github.com/Totoro97/NeuS
@@ -499,7 +535,14 @@ class NeuSLRenderer:
         Up sampling give a fixed inv_s
         """
         weights = self.density2weights(z_vals, density)
+        if torch.any(torch.isnan(weights)):
+            print(weights)
         z_samples = sample_pdf_avg(z_vals, weights, n_importance, det=True).detach()
+        return z_samples
+
+    def up_sample_uni(self, z_vals, density, n_importance, alpha):
+        weights = self.density2weights(z_vals, density)
+        z_samples = sample_pdf_uni(z_vals, weights, n_importance, alpha).detach()
         return z_samples
 
     def cat_z_vals(self, rays_d, z_vals, new_z_vals, sdf, last=False):
@@ -787,7 +830,7 @@ class NeuSLRenderer:
             'inside_sphere': ret_fine['inside_sphere']
         }
 
-    def render_density(self, rays_d):
+    def render_density(self, rays_d, alpha):
         batch_size = len(rays_d)
         z_vals = torch.linspace(0.0, 1.0, self.n_samples, device=rays_d.device)
         near, far = self.bound[0, 2], self.bound[1, 2]
@@ -805,15 +848,18 @@ class NeuSLRenderer:
                 pts_n = self.pts_normalize(pts)
                 sdf = self.sdf_network.sdf(pts_n.reshape(-1, 3)).reshape(batch_size, self.n_samples)
 
-                for i in range(self.up_sample_steps):
-                    new_z_vals = self.up_sample_density(z_vals,
-                                                        sdf,
-                                                        self.n_importance // self.up_sample_steps)
-                    z_vals, sdf = self.cat_z_vals(rays_d,
-                                                  z_vals,
-                                                  new_z_vals,
-                                                  sdf,
-                                                  last=(i + 1 == self.up_sample_steps))
+                new_z_vals = self.up_sample_uni(z_vals, sdf, self.n_importance, alpha)
+                z_vals, sdf = self.cat_z_vals(rays_d, z_vals, new_z_vals, sdf, last=True)
+
+                # for i in range(self.up_sample_steps):
+                #     new_z_vals = self.up_sample_density(z_vals,
+                #                                         sdf,
+                #                                         self.n_importance // self.up_sample_steps)
+                #     z_vals, sdf = self.cat_z_vals(rays_d,
+                #                                   z_vals,
+                #                                   new_z_vals,
+                #                                   sdf,
+                #                                   last=(i + 1 == self.up_sample_steps))
 
         # Render core
         batch_size, n_samples = z_vals.shape  # [N, C]
