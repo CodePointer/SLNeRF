@@ -17,7 +17,9 @@ from scipy.spatial.transform import Rotation
 
 from pathlib import Path
 from configparser import ConfigParser
-from pointerlib import plb
+import pointerlib as plb
+
+from tools.sensors import VirtualCamera, VirtualProjector, Flea3Camera, ExtendProjector
 
 
 # - Coding Part - #
@@ -121,12 +123,44 @@ def load_render(folder):  # TODO: 标定参数还是有很多小问题。先跳�
         plb.imsave(scene_folder / 'img' / f'img_{pat_idx}.png', img[0])
 
 
-# TODO: 先研究采样。
-#  1. 看看现在的效果如何？ -> 目前来看还凑合。但原本的sample逻辑还是会有细节上的问题。
-#  2. 考虑使用32个正常采样，剩下32个用来uniformly在最大值附近sample。
+def capture_data(folder):
+    # Init sensors
+    depth = plb.imload(folder / 'depth' / 'depth_0.png', scale=10.0).squeeze(0)
+    color = plb.imload(folder / 'texture' / 'texture_0.png', flag_tensor=False)
+    color_u8 = (color * 255.0).astype(np.uint8)
+    gray_u8 = cv2.cvtColor(color_u8, cv2.COLOR_BGR2GRAY)
+    gray = gray_u8.astype(np.float32) / 255.0
+    gray = plb.a2t(gray)
+
+    camera = VirtualCamera(
+        calib_ini=folder / 'config.ini',
+        depth_cam=depth
+    )
+    # camera = Flea3Camera(cam_idx=0, avg_frame=1)
+
+    projector = VirtualProjector(rad=5, sigma=3.0)
+
+    # For every pattern, collect information
+    pat_folder = folder / 'pat'
+    total_frm = len(list(pat_folder.glob('*.png')))
+    pat_set = [plb.imload(pat_folder / f'pat_{x}.png') for x in range(total_frm)]
+
+    projector.set_pattern_set(pat_set)
+    res = []
+    for pat_idx in range(total_frm):
+        pattern = projector.project(pat_idx)
+        img = camera.capture(pat=pattern, color=gray)
+        res.append(img)
+        # plb.imviz(img, 'img', 10)
+        # plb.imsave(folder / 'img' / f'img_{pat_idx}.png', img)
+    # key = plb.imviz_loop(res, 'img', interval=200)
+    for pat_idx in range(total_frm):
+        plb.imsave(folder / 'img' / f'img_{pat_idx}.png', res[pat_idx])
+
+
 def calculate_occlusion(depth_mat):
     hei, wid = depth_mat.shape[-2:]
-    mask_occ = torch.zeros_like(depth_mat)
+    mask_occ = torch.ones_like(depth_mat)
 
     # TODO: 完成遮挡模式下的表示。可带可不带，可以先跳过这一步去下面一步。
 
@@ -138,19 +172,36 @@ def calculate_occlusion(depth_mat):
 
     # 展示mask，确定没有问题，保存。
 
-    pass
+    return mask_occ
 
 
-# TODO: 完成mask之后进行渲染。有了结果之后放到原来的network里面进行训练，判断是否可行。
+def collect_data(folder, scene_num=1, callback_fun=lambda: None):
+    # 1. Init sensors
+    camera = Flea3Camera(cam_idx=0, avg_frame=1)
+    projector = ExtendProjector(screen_width=1920)
+    pat_folder = folder / 'pat'
+    total_frm = len(list(pat_folder.glob('*.png')))
+    pat_set = [plb.imload(pat_folder / f'pat_{x}.png') for x in range(total_frm)]
+    projector.set_pattern_set(pat_set)
 
-# TODO：采集数据，在真实场景上进行学习和训练。
+    for scene_idx in range(scene_num):
+        scene_folder = folder / f'scene_{scene_idx:02}'
+
+        for pat_idx in range(len(pat_set)):
+            projector.project(pat_idx)
+            img = camera.capture()
+            plb.imsave(scene_folder / 'img' / f'img_{pat_idx}.png', img, mkdir=True)
+
+        callback_fun()
+
+
 def main():
-    folder = Path(r'C:\SLDataSet\20220817s')
+    folder = Path(r'C:\SLDataSet\20220907real')
 
-    depth = plb.imload(folder / 'depth' / 'depth_0.png', scale=10.0).squeeze(0)
-    calculate_occlusion(depth)
+    # depth = plb.imload(folder / 'depth' / 'depth_0.png', scale=10.0).squeeze(0)
+    # calculate_occlusion(depth)
 
-    load_render(folder)
+    capture_data(folder)
     pass
 
 

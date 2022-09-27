@@ -51,7 +51,7 @@ class Worker:
 
         self.stopwatch = None
         self.status = "Unknown"
-        self.save_flag = False
+        # self.save_flag = False
 
     def logging(self, outputs, tag='paras', step=None, log=True, save=True):
         # Only first gpu have logs
@@ -77,14 +77,11 @@ class Worker:
 
     def create_res_writers(self):
         """For result output."""
-        if self.save_flag:
-            out_dir = self.res_dir / 'output'
-            out_dir.mkdir(parents=True, exist_ok=True)
-            config = configparser.ConfigParser()
-            config['DEFAULT'] = {}
-            return out_dir, config
-        else:
-            return None
+        out_dir = self.res_dir / 'output'
+        out_dir.mkdir(parents=True, exist_ok=True)
+        config = configparser.ConfigParser()
+        config['DEFAULT'] = {}
+        return out_dir, config
 
     def init_all(self):
         self.init_logger()
@@ -207,7 +204,6 @@ class Worker:
         self.logging(f'Learning rate: {self.args.lr} * {gamma} for every {self.args.lr_step}')
 
     def do(self):
-
         # Set initial things
         epoch_start = self.args.epoch_start
         if self.args.exp_type == 'train':
@@ -346,7 +342,7 @@ class Worker:
 
     def train_epoch(self, epoch):
         self.stopwatch = plb.StopWatch()
-        self.status = "Train"
+        self.status = 'Train'
 
         train_sampler = None
         shuffle = self.train_shuffle
@@ -360,9 +356,6 @@ class Worker:
         for name in self.networks:
             self.networks[name] = self.networks[name].to(self.device)
             self.networks[name].train()
-
-        if epoch == 11:
-            print(epoch)
 
         self.stopwatch.start('total')
         for idx, data in enumerate(train_loader):
@@ -385,9 +378,9 @@ class Worker:
             with self.stopwatch.record('optimizer'):
                 self.optimizer.step()
 
-            if self.save_flag and self.args.exp_type == 'online':
-                self.callback_save_res(data=data, net_out=output,
-                                       dataset=self.train_dataset, res_writer=self.res_writers[0])
+            # if self.save_flag and self.args.exp_type == 'online':
+            #     self.callback_save_res(data=data, net_out=output,
+            #                            dataset=self.train_dataset, res_writer=self.res_writers[0])
 
             # Report in real-time
             if self.check_realtime_report(epoch=epoch) and self.loss_writer is not None:
@@ -405,8 +398,7 @@ class Worker:
 
         # Print output
         if self.loss_writer is not None:
-            self.callback_epoch_report(epoch, tag='train', stopwatch=self.stopwatch,
-                                       res_writer=self.res_writers if self.save_flag else None)
+            self.callback_epoch_report(epoch, tag='train', stopwatch=self.stopwatch)
 
     def test_epoch(self, epoch):
         self.status = "Eval"
@@ -431,8 +423,8 @@ class Worker:
                     with self.stopwatch.record('forward'):
                         net_out = self.net_forward(data=data)
 
-                    if self.save_flag:
-                        self.callback_save_res(data=data, net_out=net_out, dataset=test_dataset, res_writer=res_writer)
+                    # if self.save_flag:
+                    #     self.callback_save_res(data=data, net_out=net_out, dataset=test_dataset, res_writer=res_writer)
 
                     # Draw image
                     if self.check_img_visual(idx=idx, epoch=epoch) and self.loss_writer is not None:

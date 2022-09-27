@@ -260,7 +260,9 @@ class DensityNetwork(nn.Module):
             if l < self.num_layers - 2:
                 x = self.activation(x)
 
-        return torch.nn.functional.relu(x / self.scale)
+        val = torch.nn.functional.relu(x[:, :1] / self.scale)
+        feature = x[:, 1:]
+        return val, feature
         # return torch.cat([x[:, :1] / self.scale, x[:, 1:]], dim=-1)
 
     def sdf(self, x):
@@ -268,6 +270,81 @@ class DensityNetwork(nn.Module):
 
     def sdf_hidden_appearance(self, x):
         return self.forward(x)
+
+
+# This implementation is borrowed from IDR: https://github.com/lioryariv/idr
+class ReflectNetwork(nn.Module):
+    def __init__(self,
+                 d_feature,
+                 d_in,
+                 d_out,
+                 d_hidden,
+                 n_layers,
+                 warp_layer,
+                 weight_norm=True,
+                 multires_view=0,
+                 squeeze_out=True):
+        super().__init__()
+
+        self.squeeze_out = squeeze_out
+        self.warp_layer = warp_layer
+        dims = [d_in + d_feature] + [d_hidden for _ in range(n_layers)] + [d_out]
+
+        self.embedview_fn = None
+        if multires_view > 0:
+            embedview_fn, input_ch = Embedder.create(multires_view, input_dims=d_in)
+            self.embedview_fn = embedview_fn
+            dims[0] += (input_ch - 3)
+
+        self.num_layers = len(dims)
+
+        for l in range(0, self.num_layers - 1):
+            out_dim = dims[l + 1]
+            lin = nn.Linear(dims[l], out_dim)
+
+            if weight_norm:
+                lin = nn.utils.weight_norm(lin)
+
+            setattr(self, "lin" + str(l), lin)
+
+        self.relu = nn.ReLU()
+
+    def forward(self, points, feature_vectors, reflect=None):  # normals, view_dirs, feature_vectors):
+        point_color = self.warp_layer(points)
+
+        # if self.embedview_fn is not None:
+        #     points = self.embedview_fn(points)
+        #     # view_dirs = self.embedview_fn(view_dirs)
+        #
+        # rendering_input = torch.cat([points, feature_vectors], dim=-1)
+        #
+        # # if self.mode == 'idr':
+        # #     rendering_input = torch.cat([points, view_dirs, normals, feature_vectors], dim=-1)
+        # # elif self.mode == 'no_view_dir':
+        # #     rendering_input = torch.cat([points, normals, feature_vectors], dim=-1)
+        # # elif self.mode == 'no_normal':
+        # #     rendering_input = torch.cat([points, view_dirs, feature_vectors], dim=-1)
+        #
+        # x = rendering_input
+        #
+        # for l in range(0, self.num_layers - 1):
+        #     lin = getattr(self, "lin" + str(l))
+        #
+        #     x = lin(x)
+        #
+        #     if l < self.num_layers - 2:
+        #         x = self.relu(x)
+        #
+        # if self.squeeze_out:
+        #     x = torch.sigmoid(x)
+        #
+        # a = x[:, :1]
+        # b = x[:, 1:]
+
+        a = reflect[:, 1:]
+        b = reflect[:, :1]
+
+        return a * point_color + b
 
 
 # This code was taken from NeuS: https://github.com/Totoro97/NeuS
@@ -830,7 +907,7 @@ class NeuSLRenderer:
             'inside_sphere': ret_fine['inside_sphere']
         }
 
-    def render_density(self, rays_d, alpha):
+    def render_density(self, rays_d, reflect, alpha):
         batch_size = len(rays_d)
         z_vals = torch.linspace(0.0, 1.0, self.n_samples, device=rays_d.device)
         near, far = self.bound[0, 2], self.bound[1, 2]
@@ -846,7 +923,8 @@ class NeuSLRenderer:
             with torch.no_grad():
                 pts = rays_d[:, None, :] * z_vals[..., :, None]
                 pts_n = self.pts_normalize(pts)
-                sdf = self.sdf_network.sdf(pts_n.reshape(-1, 3)).reshape(batch_size, self.n_samples)
+                sdf, _ = self.sdf_network.sdf(pts_n.reshape(-1, 3))
+                sdf = sdf.reshape(batch_size, self.n_samples)
 
                 new_z_vals = self.up_sample_uni(z_vals, sdf, self.n_importance, alpha)
                 z_vals, sdf = self.cat_z_vals(rays_d, z_vals, new_z_vals, sdf, last=True)
@@ -867,9 +945,10 @@ class NeuSLRenderer:
         # Section midpoints
         pts = rays_d[:, None, :] * z_vals[..., :, None]  # n_rays, n_samples, 3
         pts_n = self.pts_normalize(pts.reshape(-1, 3))
-
-        density = self.sdf_network(pts_n).reshape(z_vals.shape)
-        sampled_color = self.color_network(pts_n).reshape(batch_size, n_samples, -1)
+        ab_reflect = reflect.reshape(batch_size, 1, 2).repeat(1, n_samples, 1)
+        density, features = self.sdf_network(pts_n)
+        density = density.reshape(z_vals.shape)
+        sampled_color = self.color_network(pts_n, features, reflect=ab_reflect.reshape(-1, 2)).reshape(batch_size, n_samples, -1)
 
         weights = self.density2weights(z_vals=z_vals, density=density)
 
@@ -888,6 +967,7 @@ class NeuSLRenderer:
 
         return {
             'pts': pts,
+            'pt_color': sampled_color,
             'color': color,
             'density': density,
             'z_vals': z_vals,

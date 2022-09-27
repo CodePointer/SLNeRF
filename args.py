@@ -31,7 +31,7 @@ def get_args():
                         action='store_true')
     parser.add_argument('--train_dir',
                         help='Folder for training data',
-                        required=True,
+                        default='',
                         type=str)
     parser.add_argument('--out_dir',
                         help='The output directory',
@@ -91,8 +91,8 @@ def get_args():
                         default=1,
                         type=int)
     parser.add_argument('--save_stone',
-                        help='How many iters for res writing.',
-                        default=8,
+                        help='How many iters for res writing. 0 for no result saving.',
+                        default=0,
                         type=int)
     parser.add_argument('--alpha_stone',
                         help='alpha value & shrink epoch',

@@ -14,7 +14,7 @@ from dataset.multi_pat_dataset import MultiPatDataset
 
 from loss.loss_func import SuperviseDistLoss
 from networks.layers import WarpFromXyz
-from networks.neus import NeuSLRenderer, DensityNetwork
+from networks.neus import NeuSLRenderer, DensityNetwork, ReflectNetwork
 
 
 # - Coding Part - #
@@ -44,8 +44,8 @@ class ExpXyz2DensityWorker(Worker):
         self.anneal_end = 50000
 
         self.alpha_set = []
-        for pair_str in args.alpha_stone.split(';'):
-            epoch_idx, value = pair_str.split(',')
+        for pair_str in args.alpha_stone.split(','):
+            epoch_idx, value = pair_str.split('-')
             self.alpha_set.append([int(epoch_idx), float(value)])
         self.alpha = self.alpha_set[0][1]
 
@@ -61,25 +61,26 @@ class ExpXyz2DensityWorker(Worker):
 
         self.pat_dataset = MultiPatDataset(
             scene_folder=self.train_dir,
-            pat_idx_set=[0, 2, 4, 6, 8, 10, 12, 14],
+            pat_idx_set=[
+                0, 1, 2, 3, 4, 5, 6,
+                # 8, 9, 10, 11, 12, 13, 14,
+                # 16, 17, 18, 19,
+                40, 41
+            ],
             # pat_idx_set=[11],
             sample_num=self.sample_num,
             calib_para=config['Calibration'],
             device=self.device
         )
-        self.train_dataset = None
-        self.test_dataset = []
-        self.res_writers = []
+        self.train_dataset = self.pat_dataset
 
-        if self.args.exp_type == 'train':
-            self.save_flag = False
-            self.train_dataset = self.pat_dataset
-        elif self.args.exp_type == 'eval':  # Without BP: TIDE
-            self.save_flag = False
+        self.test_dataset = []
+        if self.args.exp_type == 'eval':
             self.test_dataset.append(self.pat_dataset)
+
+        self.res_writers = []
+        if self.args.save_stone > 0:
             self.res_writers.append(self.create_res_writers())
-        else:
-            raise NotImplementedError(f'Wrong exp_type: {self.args.exp_type}')
 
         # Init warp_layer
         self.bound, self.center_pt, self.scale = self.pat_dataset.get_bound()
@@ -99,7 +100,7 @@ class ExpXyz2DensityWorker(Worker):
             Keys will be used for network saving.
         """
         self.networks['DensityNetwork'] = DensityNetwork(
-            d_out=1,
+            d_out=1 + 256,
             d_in=3,
             d_hidden=256,
             n_layers=8,
@@ -110,10 +111,21 @@ class ExpXyz2DensityWorker(Worker):
             geometric_init=True,
             weight_norm=True
         )
+        self.networks['ReflectNetwork'] = ReflectNetwork(
+            d_feature=256,
+            d_in=3,  # Points only
+            d_out=2,  # Reflectence: a, b
+            d_hidden=256,
+            n_layers=4,
+            warp_layer=self.warp_layer,
+            weight_norm=True,
+            multires_view=4,
+            squeeze_out=True
+        )
         self.renderer = NeuSLRenderer(
             sdf_network=self.networks['DensityNetwork'],
             deviation_network=None,
-            color_network=self.warp_layer,
+            color_network=self.networks['ReflectNetwork'],
             n_samples=64,
             n_importance=64,
             up_sample_steps=4,
@@ -142,6 +154,7 @@ class ExpXyz2DensityWorker(Worker):
         for key in data:
             data[key] = data[key][0]
 
+        data['reflect'] = data['color'][:, -2:]
         return data
 
     def get_cos_anneal_ratio(self):
@@ -152,7 +165,7 @@ class ExpXyz2DensityWorker(Worker):
             How networks process input data and give out network output.
             The output will be passed to :loss_forward().
         """
-        render_out = self.renderer.render_density(data['rays_v'], alpha=self.alpha)
+        render_out = self.renderer.render_density(data['rays_v'], reflect=data['reflect'], alpha=self.alpha)
         return render_out['color']
 
     def loss_forward(self, net_out, data):
@@ -169,12 +182,6 @@ class ExpXyz2DensityWorker(Worker):
         return total_loss
 
     def callback_after_train(self, epoch):
-        # save_flag
-        if self.args.save_stone > 0 and (epoch + 1) % self.args.save_stone == 0:
-            self.save_flag = True
-        else:
-            self.save_flag = False
-
         # anneal_ratio
         self.anneal_ratio = np.min([1.0, epoch / self.anneal_end])
         for alpha_pair in self.alpha_set:
@@ -188,9 +195,6 @@ class ExpXyz2DensityWorker(Worker):
             The data should be saved with the input.
             Please create new folders and save result.
         """
-        # out_dir, config = res_writer
-        # for i in range(len(net_out)):
-        #     plb.imsave(out_dir / f'depth_s{i}.png', net_out[i], scale=10.0, img_type=np.uint16)
         pass
 
     def check_realtime_report(self, **kwargs):
@@ -228,7 +232,134 @@ class ExpXyz2DensityWorker(Worker):
             if self.history_best[0] is None or self.history_best[0] > total_loss:
                 self.history_best = [total_loss, True]
 
+        # Save
+        if self.args.save_stone > 0 and epoch % self.args.save_stone == 0:
+            res = self.visualize_output(resolution_level=1, require_item=[
+                'wrp_viz', 'depth_viz', 'depth_map', 'point_cloud'
+            ])  # TODO: 可视化所有的query部分，用于绘制结果图。
+            save_folder = self.res_dir / 'output' / f'e_{epoch:05}'
+            save_folder.mkdir(parents=True, exist_ok=True)
+            plb.imsave(save_folder / f'wrp_viz.png', res['wrp_viz'])
+            plb.imsave(save_folder / f'depth_viz.png', res['depth_viz'])
+            plb.imsave(save_folder / f'depth_map.png', res['depth_map'], scale=10.0, img_type=np.uint16)
+            np.savetxt(str(save_folder / f'depth_map.asc'), res['point_cloud'],
+                       fmt='%.2f', delimiter=',', newline='\n', encoding='utf-8')
+
+        pass
+
         self.loss_writer.flush()
+
+    def visualize_output(self, resolution_level, require_item=None):
+        if require_item is None:
+            require_item = [
+                # 'img_list',
+                'wrp_viz',
+
+                # 'depth_map',
+                'depth_viz',
+                'point_cloud',
+                'mesh',
+
+                # 'query_points',
+                # 'query_color',
+                # 'query_density',
+            ]
+
+        pvf = plb.VisualFactory
+
+        def require_contain(*keys):
+            flag = False
+            for key in keys:
+                flag = flag or (key in require_item)
+            return flag
+
+        # image, depth_map, point_cloud
+        rays_o, rays_d, img_size, mask_val, reflect = self.pat_dataset.get_uniform_ray(resolution_level=resolution_level)
+
+        img_hei, img_wid = img_size
+        total_ray = rays_o.shape[0]
+        idx = torch.arange(0, total_ray, dtype=torch.long)
+        idx = idx[mask_val]
+        rays_o = rays_o[mask_val]
+        rays_d = rays_d[mask_val]
+        reflect = reflect[mask_val]
+
+        rays_o_set = rays_o.split(self.sample_num)
+        rays_d_set = rays_d.split(self.sample_num)
+        reflect_set = reflect.split(self.sample_num)
+        out_rgb_fine = []
+        out_depth = []
+        out_pts = []
+        out_color = []
+        out_density = []
+        for rays_o, rays_d, reflect in zip(rays_o_set, rays_d_set, reflect_set):
+            render_out = self.renderer.render_density(rays_d, alpha=self.alpha, reflect=reflect)
+
+            if require_contain('img_list', 'wrp_viz'):
+                color_fine = render_out['color']  # [N, C]
+                out_rgb_fine.append(color_fine.detach().cpu())
+
+            if require_contain('depth_map', 'depth_viz', 'point_cloud', 'mesh'):
+                weights = render_out['weights']
+                mid_z_vals = render_out['z_vals']
+                max_idx = torch.argmax(weights, dim=1)  # [N]
+                mid_z = mid_z_vals[torch.arange(max_idx.shape[0]), max_idx]
+                out_depth.append(mid_z.detach().cpu())
+
+            if require_contain('query_points', 'query_color', 'query_density'):
+                out_pts.append(render_out['pts'].detach().cpu())
+
+                if require_contain('query_color'):
+                    out_color.append(render_out['pt_color'].detach().cpu())
+
+                if require_contain('query_density'):
+                    out_density.append(render_out['density'].detach().cpu())
+
+        res = {}
+        if require_contain('img_list', 'wrp_viz'):
+            img_set = torch.cat(out_rgb_fine, dim=0).permute(1, 0)
+            channel = img_set.shape[0]
+            img_all = torch.zeros([channel, total_ray], dtype=img_set.dtype).to(img_set.device)
+            img_all.scatter_(1, idx.reshape(1, -1).repeat(channel, 1), img_set)
+            img_render_list = []
+            for c in range(channel):
+                img_fine = img_all[c].reshape(img_wid, img_hei).permute(1, 0)
+                img_viz = pvf.img_visual(img_fine)
+                img_render_list.append(img_viz)
+
+            if require_contain('img_list'):
+                res['img_list'] = img_render_list
+
+            if require_contain('wrp_viz'):
+                img_gt_list = []
+                img_input = self.pat_dataset.img_set.unsqueeze(0).detach().cpu()
+                img_input_re = torch.nn.functional.interpolate(img_input, scale_factor=1 / resolution_level).squeeze(dim=0)
+                for c in range(channel):
+                    img_gt = img_input_re[c]
+                    img_viz = pvf.img_visual(img_gt)
+                    img_gt_list.append(img_viz)
+                wrp_viz = pvf.img_concat(img_render_list + img_gt_list, 2, channel, transpose=False)
+                res['wrp_viz'] = wrp_viz
+
+        if require_contain('depth_map', 'depth_viz', 'point_cloud', 'mesh'):
+            depth_set = torch.cat(out_depth, dim=0)
+            depth_all = torch.zeros([total_ray], dtype=depth_set.dtype).to(depth_set.device)
+            depth_all.scatter_(0, idx, depth_set)
+            depth_map = depth_all.reshape(img_wid, img_hei).permute(1, 0)
+            if require_contain('depth_map'):
+                res['depth_map'] = depth_map
+            if require_contain('depth_viz'):
+                depth_viz = pvf.disp_visual(depth_map, range_val=self.bound[:, 2].to(depth_map.device))
+                res['depth_viz'] = depth_viz
+            if require_contain('point_cloud', 'mesh'):
+                # TODO: DepthMapVisual + mask
+                visualizer = plb.DepthMapVisual(depth_map.unsqueeze(0), focus=2300.0 / resolution_level)
+                if require_contain('point_cloud'):
+                    res['point_cloud'] = visualizer.to_xyz_set()
+                if require_contain('mesh'):
+                    res['mesh'] = visualizer.to_mesh()
+
+        return res
 
     def callback_img_visual(self, data, net_out, tag, step):
         """
@@ -237,104 +368,9 @@ class ExpXyz2DensityWorker(Worker):
             For image visualization, some custom code is needed.
             Please write image to loss_writer and call flush().
         """
-        pvf = plb.VisualFactory
-        resolution_level = 4
-
-        # TODO: 看一些PhaseShifting的算法。更换Pattern来看结果是否可行。
-        #       然后采集一些数据；包括全黑、全白、GrayCode、PhaseShifting，不同的PhaseShifting模式。
-        #       将这些都保存在Data当中，然后进行相应的计算。
-
-        # image
-        rays_o, rays_d, img_size = self.pat_dataset.get_uniform_ray(resolution_level=resolution_level)
-        rays_o_set = rays_o.split(self.sample_num)
-        rays_d_set = rays_d.split(self.sample_num)
-        out_rgb_fine = []
-        out_depth = []
-        # out_pts = []
-        # out_min_pts = []
-        for rays_o, rays_d in zip(rays_o_set, rays_d_set):
-            render_out = self.renderer.render_density(rays_d, alpha=self.alpha)
-            color_fine = render_out['color']  # [N, C]
-            out_rgb_fine.append(color_fine.detach().cpu())
-
-            weights = render_out['weights']
-            mid_z_vals = render_out['z_vals']
-            max_idx = torch.argmax(weights, dim=1)  # [N]
-            mid_z = mid_z_vals[torch.arange(max_idx.shape[0]), max_idx]
-            out_depth.append(mid_z.detach().cpu())
-
-            # pts = render_out['pts'].detach().cpu()
-            # out_pts.append(pts.reshape(-1, 3))
-            # min_pts = pts[torch.arange(max_idx.shape[0]), max_idx]
-            # out_min_pts.append(min_pts)
-
-        img_hei, img_wid = img_size
-        img_set = torch.cat(out_rgb_fine, dim=0).permute(1, 0)
-        channel = img_set.shape[0]
-        img_render_list = []
-        for c in range(channel):
-            img_fine = img_set[c].reshape(img_wid, img_hei).permute(1, 0)
-            img_viz = pvf.img_visual(img_fine)
-            img_render_list.append(img_viz)
-        # plb.imviz(img_render_list[-1], 'img', 10)
-
-        # pts_set = torch.cat(out_pts, dim=0).numpy()
-        # np.savetxt(str(self.res_dir / 'depth_query.asc'), pts_set,
-        #            fmt='%.2f', delimiter=', ', newline='\n',
-        #            encoding='utf-8')
-        # min_pts_set = torch.cat(out_min_pts, dim=0).numpy()
-        # np.savetxt(str(self.res_dir / 'depth_map.asc'), min_pts_set,
-        #            fmt='%.2f', delimiter=', ', newline='\n',
-        #            encoding='utf-8')
-
-        img_input = self.pat_dataset.img_set.unsqueeze(0).detach().cpu()
-        img_input_re = torch.nn.functional.interpolate(img_input, scale_factor=1 / resolution_level).squeeze(dim=0)
-        for c in range(channel):
-            img_gt = img_input_re[c]
-            img_viz = pvf.img_visual(img_gt)
-            img_render_list.append(img_viz)
-        # plb.imviz(img_render_list[-1], 'img_gt', 10)
-        wrp_viz = pvf.img_concat(img_render_list, 2, channel, transpose=False)
-        self.loss_writer.add_image(f'{tag}/img_render', wrp_viz, step)
-
-        depth_set = torch.cat(out_depth, dim=0)
-        depth_mat = depth_set.reshape(img_wid, img_hei).permute(1, 0)
-        depth_viz = pvf.disp_visual(depth_mat, range_val=self.bound[:, 2].to(depth_mat.device))
-        self.loss_writer.add_image(f'{tag}/depth_map', depth_viz, step)
-
-        # plb.imsave(self.res_dir / 'depth.png', depth_mat, scale=10.0, img_type=np.uint16)
-        # plb.imsave(self.res_dir / 'depth_vis.png', depth_viz)
-        # plb.imviz(depth_mat, 'depth', 0, normalize=[300, 900])
-
-        # Mesh
-        vertices, triangles = plb.DepthMapVisual(depth_mat.unsqueeze(0), focus=2300.0 / resolution_level).to_mesh()
+        res = self.visualize_output(resolution_level=4, require_item=['wrp_viz', 'depth_viz', 'mesh'])
+        self.loss_writer.add_image(f'{tag}/img_render', res['wrp_viz'], step)
+        self.loss_writer.add_image(f'{tag}/depth_map', res['depth_viz'], step)
+        vertices, triangles = res['mesh']
         self.loss_writer.add_mesh(f'{tag}/mesh', vertices=vertices, faces=triangles, global_step=step)
-        # mesh_bound = np.stack([np.min(pts_set, axis=0), np.max(pts_set, axis=0)])
-        # vertices, triangles, pts_set_sdf, pts_select = self.renderer.extract_geometry(
-        #     torch.from_numpy(mesh_bound).cuda(),
-        #     resolution=128,
-        #     threshold=0.0
-        # )
-        # rays_o, rays_d, img_size = self.pat_dataset.get_uniform_ray(resolution_level=resolution_level)
-        # vertices, triangles, pts_set_sdf, pts_select = self.renderer.extract_proj_geometry(
-        #     rays_d,
-        #     img_size,
-        #     self.bound,
-        #     z_resolution=128,
-        #     threshold=0.0
-        # )
-        # vertices = torch.from_numpy(vertices.astype(np.float32)).unsqueeze(0)
-        # triangles = torch.from_numpy(triangles.astype(np.int32)).unsqueeze(0)
-        # ver_color = self.warp_layer(vertices[0].cuda()).detach().cpu()
-        # vertex_color = (ver_color[:, :1] * 255).numpy().astype(np.uint8).repeat(3, axis=1)
-        # # face_color = np.zeros()
-        # mesh = trimesh.Trimesh(vertices[0], triangles[0], vertex_colors=vertex_color)
-        # mesh.export(str(self.res_dir / 'mesh.ply'))
-        # self.loss_writer.add_mesh(f'{tag}/mesh', vertices=vertices, faces=triangles, global_step=step)
-        # np.savetxt(str(self.res_dir / 'sdf_query.asc'), pts_set_sdf.numpy(),
-        #            fmt='%.2f', delimiter=', ', newline='\n', encoding='utf-8')
-        # np.savetxt(str(self.res_dir / 'sdf_select.asc'), pts_select.numpy(),
-        #            fmt='%.2f', delimiter=', ', newline='\n', encoding='utf-8')
-        # print('sdf_query finished.')
-
         self.loss_writer.flush()

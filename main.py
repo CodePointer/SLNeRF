@@ -30,6 +30,8 @@ def main():
     args = get_args()
     post_process(args)
 
+    # for start_epoch in range(15001, 32001, 1000):
+    #     args.epoch_start = start_epoch
     worker = get_worker(args)
     worker.init_all()
     worker.do()

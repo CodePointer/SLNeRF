@@ -10,9 +10,9 @@
 
 # - Package Imports - #
 import numpy as np
-import cv2
 
 from pathlib import Path
+import pointerlib as plb
 
 
 # - Coding Part - #
@@ -34,87 +34,72 @@ def generate_gray(digit_num):
     return gray_code
 
 
-def draw_gray(gray_num, hei, wid):
-    step = wid // len(gray_num)
-    pat = gray_num.repeat(step, axis=0).reshape(1, -1).repeat(hei, axis=0).astype(np.uint8) * 255
-    return pat
+def generate_gray_code_pats(digit_num, hei, wid):
+    gray_code = generate_gray(digit_num)  # [2 ** digit_num, digit_num]
+    step = wid // (2 ** digit_num)
+    gray_mat_base = gray_code.transpose()  # [digit_num, 2 ** digit_num]
+    gray_mat_base = gray_mat_base.reshape([digit_num, 1, -1])
+    gray_mat = gray_mat_base.repeat(step, axis=2).repeat(hei, axis=1).astype(np.uint8) * 255
+    return gray_mat
 
 
-def generate_phase(interval, hei, wid):
-    # intensity_base = 127.50
-    # intensity_max = 127.50
-    #
-    # shift = np.array([0.0, (2 / 3) * np.pi, (4 / 3) * np.pi], dtype=np.float32).reshape(1, 3)
-    # theta = (np.arange(0, interval) / interval * (2 * np.pi)).reshape(-1, 1)
-    # phase_set = intensity_base + intensity_max * np.cos(theta + shift)
-    #
-    # step = wid // interval
-    # phase_set_part = phase_set.reshape(1, interval, 3)
-    # pats = np.tile(phase_set_part, [hei, step, 1])
-
+def generate_phase_pats(interval, hei, wid):
     intensity_base = 127.50
     intensity_max = 127.50
 
-    theta = (np.arange(1, interval + 1) / interval * (2 * np.pi) - np.pi).reshape(-1, 1)  # [0, interval] -> [-pi, pi]
-    phi = np.array([0.0, (1 / 2) * np.pi, np.pi, (3 / 2) * np.pi], dtype=np.float32).reshape(1, 4)
+    theta = (np.arange(1, interval + 1) / interval * (2 * np.pi) - np.pi).reshape(1, -1)  # [0, interval] -> [-pi, pi]
+    phi = np.array([0.0, (1 / 2) * np.pi, np.pi, (3 / 2) * np.pi], dtype=np.float32).reshape(-1, 1)
     phase_set = intensity_base + intensity_max * np.sin(theta + phi)
 
     step = wid // interval
-    phase_set_part = phase_set.reshape(1, interval, 4)
-    pats = np.tile(phase_set_part, [hei, step, 1])
+    phase_set_part = phase_set.reshape(4, 1, interval)
+    pats = np.tile(phase_set_part, [1, hei, step])
 
     return pats.astype(np.uint8)
 
 
-def decode_phase(pats, interval):
-    # pats = pats.astype(np.float32)
-    # ntr = np.sqrt(3) * (pats[:, :, 1] - pats[:, :, 2])
-    # dtr = 2 * pats[:, :, 0] - (pats[:, :, 1] + pats[:, :, 2])
-    # # tan_val = ntr / dtr
-    # theta = - np.arctan2(ntr, dtr)
-    # theta[theta < 0.0] += 2 * np.pi
-    # pixel_val = theta / (2 * np.pi) * interval
-
-    pats = pats.astype(np.float32)
-    ntr = (pats[:, :, 0] - pats[:, :, 2])
-    dtr = (pats[:, :, 1] - pats[:, :, 3])
-    # tan_val = ntr / dtr
-    theta = np.arctan2(ntr, dtr)
-    pixel_val = (theta + np.pi) / (2 * np.pi) * interval
-    return pixel_val
+def generate_base_pats(hei, wid):
+    res = np.zeros([2, hei, wid], dtype=np.uint8)
+    res[1] = 255
+    return res
 
 
 def main():
-    target_folder = Path('C:/SLDataSet/20220617s/pat')
+    target_folder = Path('C:/SLDataSet/20220826s/pat')
 
-    digit_num = 8
-    hei = 800
+    digit_wid = 8
+    digit_hei = 8
+    phase_wid = 40
+    phase_hei = 32
+    hei = 768
     wid = 1280
 
-    # gray_code = generate_gray(digit_num)
-    # for i in range(digit_num):
-    #     pat = draw_gray(gray_code[:, i], hei, wid)
-    #     # cv2.imshow('pat', pat)
-    #     # cv2.waitKey(10)
-    #     cv2.imwrite(str(target_folder / f'pat_{2 * i}.png'), pat)
-    #     pat_inv = 255 - pat
-    #     cv2.imwrite(str(target_folder / f'pat_{2 * i + 1}.png'), pat_inv)
+    gray_pats = generate_gray_code_pats(digit_wid, hei, wid)
+    gray_pats_inv = 255 - gray_pats
+    phase_pats = generate_phase_pats(phase_wid, hei, wid)
+    gray_pats_t = generate_gray_code_pats(digit_hei, wid, hei).transpose([0, 2, 1])
+    gray_pats_inv_t = 255 - gray_pats_t
+    phase_pats_t = generate_phase_pats(phase_hei, wid, hei).transpose([0, 2, 1])
+    base_pats = generate_base_pats(hei, wid)
 
-    interval = 40
-    start_idx = 16
-    pats = generate_phase(interval, hei, wid)
-    pixel_val = decode_phase(pats, interval)
-    # pix_show = (pixel_val * 6).astype(np.uint8)
-    # cv2.imshow('pixel', pix_show)
-    # cv2.waitKey(0)
+    all_pats = np.concatenate([
+        gray_pats,
+        gray_pats_inv,
+        phase_pats,
+        gray_pats_t,
+        gray_pats_inv_t,
+        phase_pats_t,
+        base_pats
+    ], axis=0)
 
-    for i in range(4):
-        pat = pats[:, :, i]
-        cv2.imshow('pat', pat)
-        cv2.waitKey(0)
-        cv2.imwrite(str(target_folder / f'pat_{i + start_idx}.png'), pat)
+    pat_num = all_pats.shape[0]
+    out_hei = 800
+    zero_mat = np.zeros([pat_num, out_hei - hei, wid], dtype=np.uint8)
+    all_pats_out = np.concatenate([zero_mat, all_pats], axis=1)
 
-    # pass
+    # plb.imviz_loop(all_pats_out, name='pat', interval=500)
+    for idx in range(pat_num):
+        plb.imsave(target_folder / f'pat_{idx}.png', all_pats_out[idx], scale=1.0, mkdir=True)
 
 
 if __name__ == '__main__':
