@@ -27,7 +27,7 @@ class ExpXyz2DensityWorker(Worker):
 
         # init_dataset()
         self.pat_dataset = None
-        self.sample_num = 512
+        self.sample_num = self.args.batch_num
         self.bound = None
         self.center_pt = None
         self.scale = None
@@ -59,15 +59,10 @@ class ExpXyz2DensityWorker(Worker):
         config = ConfigParser()
         config.read(str(self.train_dir / 'config.ini'), encoding='utf-8')
 
+        pat_idx_set = [int(x.strip()) for x in self.args.pat_set.split(',')]
         self.pat_dataset = MultiPatDataset(
             scene_folder=self.train_dir,
-            pat_idx_set=[
-                0, 1, 2, 3, 4, 5, 6,
-                # 8, 9, 10, 11, 12, 13, 14,
-                # 16, 17, 18, 19,
-                40, 41
-            ],
-            # pat_idx_set=[11],
+            pat_idx_set=pat_idx_set,
             sample_num=self.sample_num,
             calib_para=config['Calibration'],
             device=self.device

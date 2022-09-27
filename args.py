@@ -54,6 +54,10 @@ def get_args():
                         default='train',
                         choices=['train', 'eval'],
                         type=str)
+    parser.add_argument('--batch_num',
+                        help='How many points are selected for each training.',
+                        default=512,
+                        type=int)
     parser.add_argument('--num_workers',
                         help='Workers for loading data. Will be set to 0 if under win systems.',
                         default=4,
@@ -97,6 +101,10 @@ def get_args():
     parser.add_argument('--alpha_stone',
                         help='alpha value & shrink epoch',
                         default='0,1.0',
+                        type=str)
+    parser.add_argument('--pat_set',
+                        help='Pattern number set for training.',
+                        default='',
                         type=str)
 
     args = parser.parse_args()
