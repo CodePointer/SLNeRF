@@ -216,3 +216,6 @@ class ExtendProjector(BaseProjector):
         cv2.imshow(self.win_name, self.patterns[idx])
         cv2.waitKey(50)
         return super().project(idx)
+
+
+print(1)

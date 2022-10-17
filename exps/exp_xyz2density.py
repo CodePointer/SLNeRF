@@ -13,7 +13,7 @@ from worker.worker import Worker
 import pointerlib as plb
 from dataset.multi_pat_dataset import MultiPatDataset
 
-from loss.loss_func import SuperviseDistLoss
+from loss.loss_func import SuperviseDistLoss, NeighborGradientLoss
 from networks.layers import WarpFromXyz
 from networks.neus import NeuSLRenderer, DensityNetwork, ReflectNetwork
 
@@ -48,6 +48,8 @@ class ExpXyz2DensityWorker(Worker):
             self.alpha_set.append([int(epoch_idx), float(value)])
         self.alpha = self.alpha_set[0][1]
 
+        self.reg_ratio = 0.0
+
     def init_dataset(self):
         """
             Requires:
@@ -64,7 +66,8 @@ class ExpXyz2DensityWorker(Worker):
             pat_idx_set=pat_idx_set,
             sample_num=self.sample_num,
             calib_para=config['Calibration'],
-            device=self.device
+            device=self.device,
+            rad=self.args.patch_rad
         )
         self.train_dataset = self.pat_dataset
 
@@ -137,6 +140,10 @@ class ExpXyz2DensityWorker(Worker):
         """
         self.super_loss = SuperviseDistLoss(dist='l1')
         self.loss_funcs['color_l1'] = self.super_loss
+
+        if self.args.patch_rad > 0:
+            self.loss_funcs['gradient'] = NeighborGradientLoss(rad=self.args.patch_rad, dist='l2')
+
         self.logging(f'--loss types: {self.loss_funcs.keys()}')
         pass
 
@@ -160,18 +167,24 @@ class ExpXyz2DensityWorker(Worker):
             The output will be passed to :loss_forward().
         """
         render_out = self.renderer.render_density(data['rays_v'], reflect=data['reflect'], alpha=self.alpha)
-        return render_out['color']
+        return render_out['color'], render_out['depth']
 
     def loss_forward(self, net_out, data):
         """
             How loss functions process the output from network and input data.
             The output will be used with err.backward().
         """
-        color_fine = net_out
+        color_fine, depth_res = net_out
         total_loss = torch.zeros(1).to(self.device)
         total_loss += self.loss_record(
             'color_l1', pred=color_fine, target=data['color']
         )
+
+        if 'gradient' in self.loss_funcs:
+            total_loss += self.loss_record(
+                'gradient', depth=depth_res, mask=data['mask']
+            ) * self.reg_ratio
+
         self.avg_meters['Total'].update(total_loss, self.N)
         return total_loss
 
@@ -182,6 +195,8 @@ class ExpXyz2DensityWorker(Worker):
             if alpha_pair[0] > epoch:
                 break
             self.alpha = alpha_pair[1]
+        if epoch > 1000:
+            self.reg_ratio = 0.01
 
     def callback_save_res(self, data, net_out, dataset, res_writer):
         """
@@ -229,8 +244,7 @@ class ExpXyz2DensityWorker(Worker):
         # Save
         if self.args.save_stone > 0 and epoch % self.args.save_stone == 0:
             res = self.visualize_output(resolution_level=1, require_item=[
-                'img_list', 'wrp_viz', 'depth_viz', 'depth_map', 'point_cloud',
-                'query_density', 'query_z', 'query_weights'
+                'wrp_viz', 'depth_viz', 'depth_map', 'point_cloud'
             ])  # TODO: 可视化所有的query部分，用于绘制结果图。
             save_folder = self.res_dir / 'output' / f'e_{epoch:05}'
             save_folder.mkdir(parents=True, exist_ok=True)
@@ -279,10 +293,10 @@ class ExpXyz2DensityWorker(Worker):
         img_hei, img_wid = img_size
         total_ray = rays_o.shape[0]
         idx = torch.arange(0, total_ray, dtype=torch.long)
-        idx = idx[mask_val]
-        rays_o = rays_o[mask_val]
-        rays_d = rays_d[mask_val]
-        reflect = reflect[mask_val]
+        idx = idx[mask_val > 0.0]
+        rays_o = rays_o[mask_val > 0.0]
+        rays_d = rays_d[mask_val > 0.0]
+        reflect = reflect[mask_val > 0.0]
 
         rays_o_set = rays_o.split(self.sample_num)
         rays_d_set = rays_d.split(self.sample_num)
@@ -302,12 +316,13 @@ class ExpXyz2DensityWorker(Worker):
                 out_rgb_fine.append(color_fine.detach().cpu())
 
             if require_contain('depth_map', 'depth_viz', 'point_cloud', 'mesh'):
-                weights = render_out['weights']
-                mid_z_vals = render_out['pts'][:, :, -1]
-                max_idx = torch.argmax(weights, dim=1)  # [N]
-                mid_z = mid_z_vals[torch.arange(max_idx.shape[0]), max_idx]
-                # mid_z = render_out['z_val']
-                out_depth.append(mid_z.detach().cpu())
+                # weights = render_out['weights']
+                # mid_z_vals = render_out['pts'][:, :, -1]
+                # max_idx = torch.argmax(weights, dim=1)  # [N]
+                # mid_z = mid_z_vals[torch.arange(max_idx.shape[0]), max_idx]
+                # out_depth.append(mid_z.detach().cpu())
+                depth_val = render_out['depth'].reshape(-1)
+                out_depth.append(depth_val.detach().cpu())
 
             if require_contain('query_z'):
                 out_z.append(render_out['z_vals'].detach().cpu())
