@@ -965,10 +965,14 @@ class NeuSLRenderer:
 
         color = (sampled_color * weights[:, :, None]).sum(dim=1)
 
+        # Compute depth
+        depth_val = (pts[:, :, -1:] * weights[:, :, None]).sum(dim=1)
+
         return {
             'pts': pts,
             'pt_color': sampled_color,
             'color': color,
+            'depth': depth_val,
             'density': density,
             'z_vals': z_vals,
             'weights': weights,

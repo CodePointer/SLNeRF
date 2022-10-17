@@ -98,10 +98,15 @@ def get_args():
                         help='How many iters for res writing. 0 for no result saving.',
                         default=0,
                         type=int)
+
     parser.add_argument('--alpha_stone',
                         help='alpha value & shrink epoch',
                         default='0,1.0',
                         type=str)
+    parser.add_argument('--patch_rad',
+                        help='Sampled patch radiace for training. Patch side length = 2 * patch_rad + 1',
+                        default=0,
+                        type=int)
     parser.add_argument('--pat_set',
                         help='Pattern number set for training.',
                         default='',
@@ -140,7 +145,7 @@ def post_process(args):
     # 4. For distributed when you have multiple GPU cards. Only works for linux.
     #
     torch.cuda.set_device(args.local_rank)
-    if os.name == 'nt':
+    if True:  # TODO: os.name == 'nt':
         args.data_parallel = False
     else:
         init_process_group('nccl', init_method='env://')
