@@ -11,12 +11,37 @@
 # - Package Imports - #
 import numpy as np
 from pathlib import Path
+from configparser import ConfigParser
 
 import pointerlib as plb
 from tools.generate_pattern import generate_gray
 
 
 # - Coding Part - #
+def coord2depth(coord_x, cam_intrin, pro_intrin, rot, tran):
+    hei, wid = coord_x.shape[-2:]
+    cam_grid = np.meshgrid(np.arange(wid), np.arange(hei))
+    xx, yy = [x.astype(np.float32) for x in cam_grid]
+
+    fx, fy, dx, dy = cam_intrin
+    cam_coord_uni = np.stack([
+        (xx - dx) / fx,
+        (yy - dy) / fy,
+        np.ones_like(xx)
+    ], axis=2)  # [hei, wid, 3]
+    rot_vec = np.matmul(rot, cam_coord_uni.reshape([-1, 3, 1]))  # [hei * wid, 3, 1]
+    rot_vec = rot_vec.reshape([hei, wid, 3]).transpose([2, 0, 1])  # [3, hei, wid]
+
+    pro_coord_uni_x = (coord_x - pro_intrin[2]) / pro_intrin[0]
+
+    ntr = pro_coord_uni_x * tran[2] - tran[0]
+    dtr = pro_coord_uni_x * rot_vec[2] - rot_vec[0]
+    dtr[dtr == 0] = 1e-7
+    depth_map = - ntr / dtr
+
+    return depth_map
+
+
 def decode_gray(gray_pat, gray_pat_inv):
     assert len(gray_pat) == len(gray_pat_inv)
     digit_num = len(gray_pat)
@@ -88,9 +113,24 @@ def decode(folder):
         coord: hei_bias = 32.0
     """
     pat_num = len(list((folder / 'pat').glob('*.png')))
-    # pat_set = [plb.imload(folder / 'pat' / f'pat_{x}.png', flag_tensor=False) for x in range(pat_num)]
-
     scene_num = len(list(folder.glob('scene_*')))
+
+    # Load config if exist
+    config_file = folder / 'config.ini'
+    calib_para = None
+    if config_file.exists():
+        print('config.ini file found. Output depth map.')
+        config = ConfigParser()
+        config.read(str(config_file), encoding='utf-8')
+        calib_para = [
+            plb.str2array(config['Calibration']['img_intrin'], np.float32),
+            plb.str2array(config['Calibration']['pat_intrin'], np.float32),
+            plb.str2array(config['Calibration']['ext_rot'], np.float32, [3, 3]),
+            plb.str2array(config['Calibration']['ext_tran'], np.float32)
+        ]
+    else:
+        print('No config.ini file is found. Compute coord only.')
+
     for scene_idx in range(scene_num):
         scene_folder = folder / f'scene_{scene_idx:02}'
         img_folder = scene_folder / 'img'
@@ -137,6 +177,10 @@ def decode(folder):
         plb.imsave(scene_folder / 'coord' / 'coord_x.png', coord_wid, scale=50.0, img_type=np.uint16, mkdir=True)
         plb.imsave(scene_folder / 'coord' / 'coord_y.png', coord_hei, scale=50.0, img_type=np.uint16, mkdir=True)
         plb.imsave(scene_folder / 'mask' / 'mask_occ.png', mask_occ, mkdir=True)
+
+        if calib_para is not None:
+            depth_map = coord2depth(coord_wid, *calib_para)
+            plb.imsave(scene_folder / 'depth' / 'depth_0.png', depth_map, scale=10.0, img_type=np.uint16, mkdir=True)
 
 
 def main():

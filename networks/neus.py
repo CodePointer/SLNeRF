@@ -341,8 +341,8 @@ class ReflectNetwork(nn.Module):
         # a = x[:, :1]
         # b = x[:, 1:]
 
-        a = reflect[:, 1:]
         b = reflect[:, :1]
+        a = reflect[:, 1:] - b
 
         return a * point_color + b
 
@@ -585,12 +585,10 @@ class NeuSLRenderer:
 
     @staticmethod
     def density2weights(z_vals, density, z_steps=None):
-        # act_func = torch.nn.functional.relu
+        #
+        # 这一段是原本NeRF的处理方式。
+        #
         if z_steps is None:
-            # z_steps = torch.cat([
-            #     torch.zeros_like(z_vals[:, :1]),
-            #     z_vals[:, 1:] - z_vals[:, :-1],
-            # ], dim=1)
             z_mids = (z_vals[:, :-1] + z_vals[:, 1:]) * 0.5
             z_bounds = torch.cat([
                 z_vals[:, :1],
@@ -598,13 +596,17 @@ class NeuSLRenderer:
                 z_vals[:, -1:]
             ], dim=1)
             z_steps = z_bounds[:, 1:] - z_bounds[:, :-1]
-
         alpha = 1.0 - torch.exp(- density * z_steps)
         acc_trans = torch.cumprod(torch.cat([
             torch.ones_like(alpha[:, :1]),
             (1.0 - alpha + 1e-7),
         ], dim=1), dim=1)[:, :-1]
         weights = alpha * acc_trans
+
+        #
+        # 这里是Softmax，直接将density映射为weight。
+        #
+        # weights = torch.nn.functional.softmax(density, dim=1)
         return weights
 
     def up_sample_density(self, z_vals, density, n_importance):
@@ -805,9 +807,9 @@ class NeuSLRenderer:
 
     def pts_normalize(self, pts):
         bound_min, bound_max = self.bound
-        scale = bound_max - bound_min
+        scale = (bound_max - bound_min)
         center_pt = (bound_max + bound_min) / 2.0
-        pts_normalized = (pts - center_pt) / scale * 2.0
+        pts_normalized = (pts - center_pt) / scale
         return pts_normalized
 
     def render(self, rays_o, rays_d, bound, background_rgb=None, cos_anneal_ratio=0.0):
@@ -945,24 +947,22 @@ class NeuSLRenderer:
         # Section midpoints
         pts = rays_d[:, None, :] * z_vals[..., :, None]  # n_rays, n_samples, 3
         pts_n = self.pts_normalize(pts.reshape(-1, 3))
-        ab_reflect = reflect.reshape(batch_size, 1, 2).repeat(1, n_samples, 1)
         density, features = self.sdf_network(pts_n)
         density = density.reshape(z_vals.shape)
+
+        #
+        # # Directly Compute pts
+        #
+        # weights = torch.nn.functional.softmax(density, dim=1)  # [n_rays, n_samples]
+        # z_val = (z_vals * weights).sum(dim=1).reshape(-1, 1)  # [n_rays, 1]
+        # pt = rays_d[:, None, :] * z_val[..., :, None]  # [n_rays, 1, 3]
+        # pt_n = self.pts_normalize(pt.reshape(-1, 3))
+        # sampled_color = self.color_network(pt_n, None, reflect=reflect)
+        # color = sampled_color
+
+        ab_reflect = reflect.reshape(batch_size, 1, 2).repeat(1, n_samples, 1)
         sampled_color = self.color_network(pts_n, features, reflect=ab_reflect.reshape(-1, 2)).reshape(batch_size, n_samples, -1)
-
         weights = self.density2weights(z_vals=z_vals, density=density)
-
-        # Check
-        # query_idx = 120
-        # den_norm = density[query_idx].detach().cpu().numpy()
-        # den_norm = den_norm / np.sum(den_norm)
-        # wei = weights[query_idx].detach().cpu().numpy()
-        # z_val = z_vals[query_idx].detach().cpu().numpy()
-        # plt.plot(z_val, den_norm)
-        # plt.plot(z_val, wei)
-        # plt.legend(['density', 'weight'])
-        # plt.show()
-
         color = (sampled_color * weights[:, :, None]).sum(dim=1)
 
         return {
@@ -971,6 +971,7 @@ class NeuSLRenderer:
             'color': color,
             'density': density,
             'z_vals': z_vals,
+            # 'z_val': z_val,
             'weights': weights,
         }
 

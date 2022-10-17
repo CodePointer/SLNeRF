@@ -7,6 +7,7 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from configparser import ConfigParser
+import matplotlib.pyplot as plt
 
 from worker.worker import Worker
 import pointerlib as plb
@@ -29,8 +30,6 @@ class ExpXyz2DensityWorker(Worker):
         self.pat_dataset = None
         self.sample_num = self.args.batch_num
         self.bound = None
-        self.center_pt = None
-        self.scale = None
         self.warp_layer = None
 
         # init_networks()
@@ -78,7 +77,7 @@ class ExpXyz2DensityWorker(Worker):
             self.res_writers.append(self.create_res_writers())
 
         # Init warp_layer
-        self.bound, self.center_pt, self.scale = self.pat_dataset.get_bound()
+        self.bound = self.pat_dataset.get_bound()
         self.warp_layer = WarpFromXyz(
             calib_para=config['Calibration'],
             pat_mat=self.pat_dataset.pat_set,
@@ -230,7 +229,8 @@ class ExpXyz2DensityWorker(Worker):
         # Save
         if self.args.save_stone > 0 and epoch % self.args.save_stone == 0:
             res = self.visualize_output(resolution_level=1, require_item=[
-                'wrp_viz', 'depth_viz', 'depth_map', 'point_cloud'
+                'img_list', 'wrp_viz', 'depth_viz', 'depth_map', 'point_cloud',
+                'query_density', 'query_z', 'query_weights'
             ])  # TODO: 可视化所有的query部分，用于绘制结果图。
             save_folder = self.res_dir / 'output' / f'e_{epoch:05}'
             save_folder.mkdir(parents=True, exist_ok=True)
@@ -239,6 +239,9 @@ class ExpXyz2DensityWorker(Worker):
             plb.imsave(save_folder / f'depth_map.png', res['depth_map'], scale=10.0, img_type=np.uint16)
             np.savetxt(str(save_folder / f'depth_map.asc'), res['point_cloud'],
                        fmt='%.2f', delimiter=',', newline='\n', encoding='utf-8')
+            img_folder = save_folder / 'img'
+            for i, img in enumerate(res['img_list']):
+                plb.imsave(img_folder / f'img_{i}.png', img, mkdir=True)
 
         pass
 
@@ -256,8 +259,10 @@ class ExpXyz2DensityWorker(Worker):
                 'mesh',
 
                 # 'query_points',
+                # 'query_z',
                 # 'query_color',
                 # 'query_density',
+                # 'query_weights',
             ]
 
         pvf = plb.VisualFactory
@@ -284,6 +289,8 @@ class ExpXyz2DensityWorker(Worker):
         reflect_set = reflect.split(self.sample_num)
         out_rgb_fine = []
         out_depth = []
+        out_z = []
+        out_weights = []
         out_pts = []
         out_color = []
         out_density = []
@@ -296,19 +303,26 @@ class ExpXyz2DensityWorker(Worker):
 
             if require_contain('depth_map', 'depth_viz', 'point_cloud', 'mesh'):
                 weights = render_out['weights']
-                mid_z_vals = render_out['z_vals']
+                mid_z_vals = render_out['pts'][:, :, -1]
                 max_idx = torch.argmax(weights, dim=1)  # [N]
                 mid_z = mid_z_vals[torch.arange(max_idx.shape[0]), max_idx]
+                # mid_z = render_out['z_val']
                 out_depth.append(mid_z.detach().cpu())
 
-            if require_contain('query_points', 'query_color', 'query_density'):
+            if require_contain('query_z'):
+                out_z.append(render_out['z_vals'].detach().cpu())
+
+            if require_contain('query_points'):
                 out_pts.append(render_out['pts'].detach().cpu())
 
-                if require_contain('query_color'):
-                    out_color.append(render_out['pt_color'].detach().cpu())
+            if require_contain('query_color'):
+                out_color.append(render_out['pt_color'].detach().cpu())
 
-                if require_contain('query_density'):
-                    out_density.append(render_out['density'].detach().cpu())
+            if require_contain('query_density'):
+                out_density.append(render_out['density'].detach().cpu())
+
+            if require_contain('query_weights'):
+                out_weights.append(render_out['weights'].detach().cpu())
 
         res = {}
         if require_contain('img_list', 'wrp_viz'):
@@ -337,7 +351,7 @@ class ExpXyz2DensityWorker(Worker):
                 res['wrp_viz'] = wrp_viz
 
         if require_contain('depth_map', 'depth_viz', 'point_cloud', 'mesh'):
-            depth_set = torch.cat(out_depth, dim=0)
+            depth_set = torch.cat(out_depth, dim=0).reshape(-1)
             depth_all = torch.zeros([total_ray], dtype=depth_set.dtype).to(depth_set.device)
             depth_all.scatter_(0, idx, depth_set)
             depth_map = depth_all.reshape(img_wid, img_hei).permute(1, 0)
@@ -348,11 +362,41 @@ class ExpXyz2DensityWorker(Worker):
                 res['depth_viz'] = depth_viz
             if require_contain('point_cloud', 'mesh'):
                 # TODO: DepthMapVisual + mask
-                visualizer = plb.DepthMapVisual(depth_map.unsqueeze(0), focus=2300.0 / resolution_level)
+                visualizer = plb.DepthMapVisual(depth_map.unsqueeze(0), focus=1197.0 / resolution_level)
                 if require_contain('point_cloud'):
                     res['point_cloud'] = visualizer.to_xyz_set()
                 if require_contain('mesh'):
                     res['mesh'] = visualizer.to_mesh()
+
+        if require_contain('query_z'):
+            z_set = torch.cat(out_z, dim=0)  # [N, n_sample]
+            n_sample = z_set.shape[1]
+            z_all = torch.zeros([total_ray, n_sample], dtype=z_set.dtype).to(z_set.device)
+            z_all.scatter_(0, idx.reshape(-1, 1).repeat(1, n_sample), z_set)
+            z_map = z_all.reshape(img_wid, img_hei, n_sample).permute(1, 0, 2)
+            res['query_z'] = z_map
+
+        if require_contain('query_points'):
+            pts_set = torch.cat(out_pts, dim=0)  # [N, n_sample, 3]
+            n_sample = pts_set.shape[1]
+            pts_all = torch.zeros([total_ray, n_sample, 3], dtype=pts_set.dtype).to(pts_set.device)
+            pts_all.scatter_(0, idx.reshape(-1, 1, 1).repeat(1, n_sample, 3), pts_set)
+            pts_map = pts_all.reshape(img_wid, img_hei, n_sample, 3).permute(1, 0, 2, 3)
+            res['query_points'] = pts_map
+        if require_contain('query_density'):
+            density_set = torch.cat(out_density, dim=0)  # [N, n_sample]
+            n_sample = density_set.shape[1]
+            density_all = torch.zeros([total_ray, n_sample], dtype=density_set.dtype).to(density_set.device)
+            density_all.scatter_(0, idx.reshape(-1, 1).repeat(1, n_sample), density_set)
+            density_map = density_all.reshape(img_wid, img_hei, n_sample).permute(1, 0, 2)
+            res['query_density'] = density_map
+        if require_contain('query_weights'):
+            weight_set = torch.cat(out_weights, dim=0)
+            n_sample = weight_set.shape[1]
+            weight_all = torch.zeros([total_ray, n_sample], dtype=weight_set.dtype).to(weight_set.device)
+            weight_all.scatter_(0, idx.reshape(-1, 1).repeat(1, n_sample), weight_set)
+            weight_map = weight_all.reshape(img_wid, img_hei, n_sample).permute(1, 0, 2)
+            res['query_weights'] = weight_map
 
         return res
 

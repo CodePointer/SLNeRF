@@ -81,10 +81,10 @@ class MultiPatDataset(torch.utils.data.Dataset):
             [x_max, y_max, z_max],
         ]).to(self.device)
 
-        center = (bound[0] + bound[1]) / 2.0
-        scale = bound[1] - bound[0]
+        # center = (bound[0] + bound[1]) / 2.0
+        # scale = (bound[1] - bound[0]) / 2.0
 
-        return bound, center, scale
+        return bound
 
     def get_uniform_ray(self, resolution_level=1, device=None):
         if device is None:
@@ -108,15 +108,19 @@ class MultiPatDataset(torch.utils.data.Dataset):
         # pixels_x = pixels_x[mask_val]
         # pixels_y = pixels_y[mask_val]
 
-        fx, fy, dx, dy = self.intrinsics.to(device)
+        rays_v = self.pixel2ray(pixels_x, pixels_y)
+        rays_o = torch.zeros_like(rays_v)
+        return rays_o, rays_v, [hei, wid], mask_val, reflect
+
+    def pixel2ray(self, pixels_x, pixels_y):
+        fx, fy, dx, dy = self.intrinsics
         p = torch.stack([
             (pixels_x - dx) / fx,
             (pixels_y - dy) / fy,
             torch.ones_like(pixels_y)
         ], dim=1)  # [N, 3]
         rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # [N, 3]
-        rays_o = torch.zeros_like(rays_v)
-        return rays_o, rays_v, [hei, wid], mask_val, reflect
+        return rays_v
 
     def __getitem__(self, idx):
         # Generate random rays from one camera
@@ -126,17 +130,10 @@ class MultiPatDataset(torch.utils.data.Dataset):
         selected_coord = self.valid_coord[:, selected_idx]
         pixels_x = selected_coord[0]
         pixels_y = selected_coord[1]
+
         color = self.img_set[:, pixels_y, pixels_x]  # [N, C]
         color = color.permute(1, 0)
-
-        fx, fy, dx, dy = self.intrinsics
-        p = torch.stack([
-            (pixels_x - dx) / fx,
-            (pixels_y - dy) / fy,
-            torch.ones_like(pixels_y)
-        ], dim=1)  # [N, 3]
-        rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)  # [N, 3]
-
+        rays_v = self.pixel2ray(pixels_x, pixels_y)
         ret = {
             'idx': torch.Tensor([idx]),
             'rays_o': self.rays_o,  # [N, 3]
