@@ -99,18 +99,27 @@ def get_args():
                         default=0,
                         type=int)
 
+    # Parameters in training
+    parser.add_argument('--pat_set',
+                        help='Pattern number set for training.',
+                        default='',
+                        type=str)
     parser.add_argument('--alpha_stone',
-                        help='alpha value & shrink epoch',
-                        default='0,1.0',
+                        help='alpha value & shrink epoch for sampling.',
+                        default='0-1.0',
                         type=str)
     parser.add_argument('--patch_rad',
                         help='Sampled patch radiace for training. Patch side length = 2 * patch_rad + 1',
                         default=0,
                         type=int)
-    parser.add_argument('--pat_set',
-                        help='Pattern number set for training.',
-                        default='',
+    parser.add_argument('--reg_stone',
+                        help='reg value & shrink epoch',
+                        default='0-0,1000-0.0001',
                         type=str)
+    parser.add_argument('--reg_color_sigma',
+                        help='Parameters for color kernel control.',
+                        default=0.4,
+                        type=float)
 
     args = parser.parse_args()
     return args

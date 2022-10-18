@@ -13,7 +13,7 @@ from worker.worker import Worker
 import pointerlib as plb
 from dataset.multi_pat_dataset import MultiPatDataset
 
-from loss.loss_func import SuperviseDistLoss, NeighborGradientLoss
+from loss.loss_func import SuperviseDistLoss, NeighborGradientLossWithEdge
 from networks.layers import WarpFromXyz
 from networks.neus import NeuSLRenderer, DensityNetwork, ReflectNetwork
 
@@ -48,7 +48,12 @@ class ExpXyz2DensityWorker(Worker):
             self.alpha_set.append([int(epoch_idx), float(value)])
         self.alpha = self.alpha_set[0][1]
 
-        self.reg_ratio = 0.0
+        self.reg_set = []
+        for pair_str in args.reg_stone.split(','):
+            epoch_idx, value = pair_str.split('-')
+            self.reg_set.append([int(epoch_idx), float(value)])
+        self.reg_ratio = self.reg_set[0][1]
+
 
     def init_dataset(self):
         """
@@ -142,7 +147,11 @@ class ExpXyz2DensityWorker(Worker):
         self.loss_funcs['color_l1'] = self.super_loss
 
         if self.args.patch_rad > 0:
-            self.loss_funcs['gradient'] = NeighborGradientLoss(rad=self.args.patch_rad, dist='l2')
+            self.loss_funcs['gradient'] = NeighborGradientLossWithEdge(
+                rad=self.args.patch_rad,
+                dist='l2',
+                sigma=self.args.reg_color_sigma
+            )
 
         self.logging(f'--loss types: {self.loss_funcs.keys()}')
         pass
@@ -182,7 +191,7 @@ class ExpXyz2DensityWorker(Worker):
 
         if 'gradient' in self.loss_funcs:
             total_loss += self.loss_record(
-                'gradient', depth=depth_res, mask=data['mask']
+                'gradient', depth=depth_res, mask=data['mask'], color=data['color']
             ) * self.reg_ratio
 
         self.avg_meters['Total'].update(total_loss, self.N)
@@ -195,8 +204,10 @@ class ExpXyz2DensityWorker(Worker):
             if alpha_pair[0] > epoch:
                 break
             self.alpha = alpha_pair[1]
-        if epoch > 1000:
-            self.reg_ratio = 0.01
+        for reg_epoch, reg_value in self.reg_set:
+            if reg_epoch > epoch:
+                break
+            self.reg_ratio = reg_value
 
     def callback_save_res(self, data, net_out, dataset, res_writer):
         """
@@ -244,7 +255,7 @@ class ExpXyz2DensityWorker(Worker):
         # Save
         if self.args.save_stone > 0 and epoch % self.args.save_stone == 0:
             res = self.visualize_output(resolution_level=1, require_item=[
-                'wrp_viz', 'depth_viz', 'depth_map', 'point_cloud'
+                'img_list', 'wrp_viz', 'depth_viz', 'depth_map', 'point_cloud'
             ])  # TODO: 可视化所有的query部分，用于绘制结果图。
             save_folder = self.res_dir / 'output' / f'e_{epoch:05}'
             save_folder.mkdir(parents=True, exist_ok=True)
@@ -265,6 +276,7 @@ class ExpXyz2DensityWorker(Worker):
         if require_item is None:
             require_item = [
                 # 'img_list',
+                # 'reflectance',
                 'wrp_viz',
 
                 # 'depth_map',
@@ -298,10 +310,12 @@ class ExpXyz2DensityWorker(Worker):
         rays_d = rays_d[mask_val > 0.0]
         reflect = reflect[mask_val > 0.0]
 
-        rays_o_set = rays_o.split(self.sample_num)
-        rays_d_set = rays_d.split(self.sample_num)
-        reflect_set = reflect.split(self.sample_num)
+        pch_num = (self.args.patch_rad * 2 + 1) ** 2
+        rays_o_set = rays_o.split(self.sample_num * pch_num)
+        rays_d_set = rays_d.split(self.sample_num * pch_num)
+        reflect_set = reflect.split(self.sample_num * pch_num)
         out_rgb_fine = []
+        out_reflectance = []
         out_depth = []
         out_z = []
         out_weights = []
@@ -314,6 +328,9 @@ class ExpXyz2DensityWorker(Worker):
             if require_contain('img_list', 'wrp_viz'):
                 color_fine = render_out['color']  # [N, C]
                 out_rgb_fine.append(color_fine.detach().cpu())
+
+            if require_contain('reflectance'):
+                out_reflectance.append(render_out['reflectance'].detach().cpu())  # [N, 2]
 
             if require_contain('depth_map', 'depth_viz', 'point_cloud', 'mesh'):
                 # weights = render_out['weights']
@@ -364,6 +381,16 @@ class ExpXyz2DensityWorker(Worker):
                     img_gt_list.append(img_viz)
                 wrp_viz = pvf.img_concat(img_render_list + img_gt_list, 2, channel, transpose=False)
                 res['wrp_viz'] = wrp_viz
+
+        if require_contain('reflectance'):
+            ref_set = torch.cat(out_reflectance, dim=0).permute(1, 0)
+            ref_all = torch.zeros([2, total_ray], dtype=ref_set.dtype).to(ref_set.device)
+            ref_all.scatter_(1, idx.reshape(1, -1).repeat(2, 1), ref_set)
+            ref_viz_list = []
+            for c in range(2):
+                ref_map = ref_all[c].reshape(img_wid, img_hei).permute(1, 0)
+                ref_viz_list.append(pvf.img_visual(ref_map))
+            res['reflectance'] = ref_viz_list
 
         if require_contain('depth_map', 'depth_viz', 'point_cloud', 'mesh'):
             depth_set = torch.cat(out_depth, dim=0).reshape(-1)
@@ -422,9 +449,11 @@ class ExpXyz2DensityWorker(Worker):
             For image visualization, some custom code is needed.
             Please write image to loss_writer and call flush().
         """
-        res = self.visualize_output(resolution_level=4, require_item=['wrp_viz', 'depth_viz', 'mesh'])
+        res = self.visualize_output(resolution_level=4, require_item=['reflectance', 'wrp_viz', 'depth_viz', 'mesh'])
         self.loss_writer.add_image(f'{tag}/img_render', res['wrp_viz'], step)
         self.loss_writer.add_image(f'{tag}/depth_map', res['depth_viz'], step)
+        self.loss_writer.add_image(f'{tag}/reflectance-ref', res['reflectance'][0], step)
+        self.loss_writer.add_image(f'{tag}/reflectance-rad', res['reflectance'][1], step)
         vertices, triangles = res['mesh']
         self.loss_writer.add_mesh(f'{tag}/mesh', vertices=vertices, faces=triangles, global_step=step)
         self.loss_writer.flush()

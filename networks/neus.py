@@ -312,39 +312,40 @@ class ReflectNetwork(nn.Module):
     def forward(self, points, feature_vectors, reflect=None):  # normals, view_dirs, feature_vectors):
         point_color = self.warp_layer(points)
 
-        # if self.embedview_fn is not None:
-        #     points = self.embedview_fn(points)
-        #     # view_dirs = self.embedview_fn(view_dirs)
-        #
-        # rendering_input = torch.cat([points, feature_vectors], dim=-1)
-        #
-        # # if self.mode == 'idr':
-        # #     rendering_input = torch.cat([points, view_dirs, normals, feature_vectors], dim=-1)
-        # # elif self.mode == 'no_view_dir':
-        # #     rendering_input = torch.cat([points, normals, feature_vectors], dim=-1)
-        # # elif self.mode == 'no_normal':
-        # #     rendering_input = torch.cat([points, view_dirs, feature_vectors], dim=-1)
-        #
-        # x = rendering_input
-        #
-        # for l in range(0, self.num_layers - 1):
-        #     lin = getattr(self, "lin" + str(l))
-        #
-        #     x = lin(x)
-        #
-        #     if l < self.num_layers - 2:
-        #         x = self.relu(x)
-        #
-        # if self.squeeze_out:
-        #     x = torch.sigmoid(x)
-        #
-        # a = x[:, :1]
-        # b = x[:, 1:]
+        if self.embedview_fn is not None:
+            points = self.embedview_fn(points)
+            # view_dirs = self.embedview_fn(view_dirs)
 
-        b = reflect[:, :1]
-        a = reflect[:, 1:] - b
+        rendering_input = torch.cat([points, feature_vectors], dim=-1)
 
-        return a * point_color + b
+        # if self.mode == 'idr':
+        #     rendering_input = torch.cat([points, view_dirs, normals, feature_vectors], dim=-1)
+        # elif self.mode == 'no_view_dir':
+        #     rendering_input = torch.cat([points, normals, feature_vectors], dim=-1)
+        # elif self.mode == 'no_normal':
+        #     rendering_input = torch.cat([points, view_dirs, feature_vectors], dim=-1)
+
+        x = rendering_input
+
+        for l in range(0, self.num_layers - 1):
+            lin = getattr(self, "lin" + str(l))
+
+            x = lin(x)
+
+            if l < self.num_layers - 2:
+                x = self.relu(x)
+
+        if self.squeeze_out:
+            # x = torch.sigmoid(x)
+            x = torch.tanh(x) / 2.0 + 0.5
+
+        a = x[:, :1]
+        b = x[:, 1:]
+
+        # b = reflect[:, :1]
+        # a = reflect[:, 1:] - b
+
+        return a * point_color + b, x
 
 
 # This code was taken from NeuS: https://github.com/Totoro97/NeuS
@@ -960,13 +961,19 @@ class NeuSLRenderer:
         # sampled_color = self.color_network(pt_n, None, reflect=reflect)
         # color = sampled_color
 
-        ab_reflect = reflect.reshape(batch_size, 1, 2).repeat(1, n_samples, 1)
-        sampled_color = self.color_network(pts_n, features, reflect=ab_reflect.reshape(-1, 2)).reshape(batch_size, n_samples, -1)
+        sampled_color, reflectance = self.color_network(pts_n, features)
+        sampled_color = sampled_color.reshape(batch_size, n_samples, -1)
+        reflectance = reflectance.reshape(batch_size, n_samples, -1)
+        # ab_reflect = reflect.reshape(batch_size, 1, 2).repeat(1, n_samples, 1)
+        # sampled_color = self.color_network(pts_n, features, reflect=ab_reflect.reshape(-1, 2)).reshape(batch_size, n_samples, -1)
         weights = self.density2weights(z_vals=z_vals, density=density)
         color = (sampled_color * weights[:, :, None]).sum(dim=1)
 
         # Compute depth
         depth_val = (pts[:, :, -1:] * weights[:, :, None]).sum(dim=1)
+
+        # Reflectance field
+        brdf_val = (reflectance * weights[:, :, None]).sum(dim=1)
 
         return {
             'pts': pts,
@@ -975,6 +982,7 @@ class NeuSLRenderer:
             'depth': depth_val,
             'density': density,
             'z_vals': z_vals,
+            'reflectance': brdf_val,
             # 'z_val': z_val,
             'weights': weights,
         }
