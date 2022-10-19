@@ -14,7 +14,7 @@ import pointerlib as plb
 from dataset.multi_pat_dataset import MultiPatDataset
 
 from loss.loss_func import SuperviseDistLoss, NeighborGradientLossWithEdge
-from networks.layers import WarpFromXyz
+from networks.layers import WarpFromXyz, PatternSampler
 from networks.neus import NeuSLRenderer, DensityNetwork, ReflectNetwork
 
 
@@ -54,7 +54,6 @@ class ExpXyz2DensityWorker(Worker):
             self.reg_set.append([int(epoch_idx), float(value)])
         self.reg_ratio = self.reg_set[0][1]
 
-
     def init_dataset(self):
         """
             Requires:
@@ -66,9 +65,11 @@ class ExpXyz2DensityWorker(Worker):
         config.read(str(self.train_dir / 'config.ini'), encoding='utf-8')
 
         pat_idx_set = [int(x.strip()) for x in self.args.pat_set.split(',')]
+        ref_img_set = [int(x.strip()) for x in self.args.reflect_set.split(',')]
         self.pat_dataset = MultiPatDataset(
             scene_folder=self.train_dir,
             pat_idx_set=pat_idx_set,
+            ref_img_set=ref_img_set,
             sample_num=self.sample_num,
             calib_para=config['Calibration'],
             device=self.device,
@@ -86,13 +87,6 @@ class ExpXyz2DensityWorker(Worker):
 
         # Init warp_layer
         self.bound = self.pat_dataset.get_bound()
-        self.warp_layer = WarpFromXyz(
-            calib_para=config['Calibration'],
-            pat_mat=self.pat_dataset.pat_set,
-            bound=self.bound,
-            device=self.device
-        )
-
         self.logging(f'--train_dir: {self.train_dir}')
 
     def init_networks(self):
@@ -113,16 +107,24 @@ class ExpXyz2DensityWorker(Worker):
             geometric_init=True,
             weight_norm=True
         )
-        self.networks['ReflectNetwork'] = ReflectNetwork(
-            d_feature=256,
-            d_in=3,  # Points only
-            d_out=2,  # Reflectence: a, b
-            d_hidden=256,
-            n_layers=4,
-            warp_layer=self.warp_layer,
-            weight_norm=True,
-            multires_view=4,
-            squeeze_out=True
+        # self.networks['ReflectNetwork'] = ReflectNetwork(
+        #     d_feature=256,
+        #     d_in=3,  # Points only
+        #     d_out=2,  # Reflectence: a, b
+        #     d_hidden=256,
+        #     n_layers=4,
+        #     warp_layer=self.warp_layer,
+        #     weight_norm=True,
+        #     multires_view=4,
+        #     squeeze_out=True
+        # )
+        config = ConfigParser()
+        config.read(str(self.train_dir / 'config.ini'), encoding='utf-8')
+        self.networks['ReflectNetwork'] = WarpFromXyz(
+            calib_para=config['Calibration'],
+            pat_mat=self.pat_dataset.pat_set,
+            bound=self.bound,
+            device=self.device
         )
         self.renderer = NeuSLRenderer(
             sdf_network=self.networks['DensityNetwork'],
@@ -163,8 +165,6 @@ class ExpXyz2DensityWorker(Worker):
         """
         for key in data:
             data[key] = data[key][0]
-
-        data['reflect'] = data['color'][:, -2:]
         return data
 
     def get_cos_anneal_ratio(self):
@@ -329,9 +329,6 @@ class ExpXyz2DensityWorker(Worker):
                 color_fine = render_out['color']  # [N, C]
                 out_rgb_fine.append(color_fine.detach().cpu())
 
-            if require_contain('reflectance'):
-                out_reflectance.append(render_out['reflectance'].detach().cpu())  # [N, 2]
-
             if require_contain('depth_map', 'depth_viz', 'point_cloud', 'mesh'):
                 # weights = render_out['weights']
                 # mid_z_vals = render_out['pts'][:, :, -1]
@@ -381,16 +378,6 @@ class ExpXyz2DensityWorker(Worker):
                     img_gt_list.append(img_viz)
                 wrp_viz = pvf.img_concat(img_render_list + img_gt_list, 2, channel, transpose=False)
                 res['wrp_viz'] = wrp_viz
-
-        if require_contain('reflectance'):
-            ref_set = torch.cat(out_reflectance, dim=0).permute(1, 0)
-            ref_all = torch.zeros([2, total_ray], dtype=ref_set.dtype).to(ref_set.device)
-            ref_all.scatter_(1, idx.reshape(1, -1).repeat(2, 1), ref_set)
-            ref_viz_list = []
-            for c in range(2):
-                ref_map = ref_all[c].reshape(img_wid, img_hei).permute(1, 0)
-                ref_viz_list.append(pvf.img_visual(ref_map))
-            res['reflectance'] = ref_viz_list
 
         if require_contain('depth_map', 'depth_viz', 'point_cloud', 'mesh'):
             depth_set = torch.cat(out_depth, dim=0).reshape(-1)
@@ -449,11 +436,9 @@ class ExpXyz2DensityWorker(Worker):
             For image visualization, some custom code is needed.
             Please write image to loss_writer and call flush().
         """
-        res = self.visualize_output(resolution_level=4, require_item=['reflectance', 'wrp_viz', 'depth_viz', 'mesh'])
+        res = self.visualize_output(resolution_level=4, require_item=['wrp_viz', 'depth_viz', 'mesh'])
         self.loss_writer.add_image(f'{tag}/img_render', res['wrp_viz'], step)
         self.loss_writer.add_image(f'{tag}/depth_map', res['depth_viz'], step)
-        self.loss_writer.add_image(f'{tag}/reflectance-ref', res['reflectance'][0], step)
-        self.loss_writer.add_image(f'{tag}/reflectance-rad', res['reflectance'][1], step)
         vertices, triangles = res['mesh']
         self.loss_writer.add_mesh(f'{tag}/mesh', vertices=vertices, faces=triangles, global_step=step)
         self.loss_writer.flush()

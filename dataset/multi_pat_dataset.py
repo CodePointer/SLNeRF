@@ -10,7 +10,7 @@ import pointerlib as plb
 # - Coding Part - #
 class MultiPatDataset(torch.utils.data.Dataset):
     """Load image & pattern for one depth map"""
-    def __init__(self, scene_folder, pat_idx_set, sample_num, calib_para, device, rad=0):
+    def __init__(self, scene_folder, pat_idx_set, ref_img_set, sample_num, calib_para, device, rad=0):
         self.scene_folder = scene_folder
         self.pat_folder = scene_folder / 'pat'
         self.img_folder = scene_folder / 'img'
@@ -33,6 +33,11 @@ class MultiPatDataset(torch.utils.data.Dataset):
         self.img_set = torch.cat(img_list, dim=0)  # [C, H, W]
         self.pat_set = torch.cat(pat_list, dim=0)  # [C, H, W]
         # self.depth = plb.imload(self.depth_folder / 'depth_0.png', scale=10.0)  # [1, H, W]
+
+        # 读取reflect_set
+        reflect_list = [plb.imload(self.img_folder / f'img_{idx}.png') for idx in ref_img_set]
+        reflect_list[0] -= reflect_list[1]
+        self.ref_set = torch.cat(reflect_list, dim=0)  # [2, H, W]
 
         self.device = device
 
@@ -61,6 +66,7 @@ class MultiPatDataset(torch.utils.data.Dataset):
 
         self.img_set = self.img_set.to(device)
         self.pat_set = self.pat_set.to(device)
+        self.ref_set = self.ref_set.to(device)
         # self.depth = self.depth.to(device)
         self.mask_occ = self.mask_occ.to(device)
         # self.valid_coord = self.valid_coord.to(device)
@@ -105,9 +111,8 @@ class MultiPatDataset(torch.utils.data.Dataset):
         pixels_x = pixels_x.reshape(-1)
         pixels_y = pixels_y.reshape(-1)
 
-        color = self.img_set[:, pixels_y, pixels_x]  # [N, C]
-        color = color.permute(1, 0)
-        reflect = color[:, -2:]
+        # color = self.img_set[:, pixels_y, pixels_x].permute(1, 0)  # [N, C]
+        reflect = self.ref_set[:, pixels_y, pixels_x].permute(1, 0)  # [pch_len**2 * N, 2]
 
         # Mash check
         mask_val = self.mask_occ[0, pixels_y, pixels_x]
@@ -144,6 +149,7 @@ class MultiPatDataset(torch.utils.data.Dataset):
         pixels_x = selected_coord[0].reshape(-1)
         pixels_y = selected_coord[1].reshape(-1)
         color = self.img_set[:, pixels_y, pixels_x].permute(1, 0)  # [pch_len**2 * N, C]
+        reflect = self.ref_set[:, pixels_y, pixels_x].permute(1, 0)  # [pch_len**2 * N, 2]
 
         fx, fy, dx, dy = self.intrinsics
         p = torch.stack([
@@ -159,6 +165,7 @@ class MultiPatDataset(torch.utils.data.Dataset):
             'rays_v': rays_v,                           # [pch_len**2 * N, 3]
             'mask': selected_mask.reshape(-1, 1),       # [pch_len**2 * N, 1]
             'color': color,                             # [pch_len**2 * N, C]
+            'reflect': reflect,                         # [pch_len**2 * N, 2]
             'pat': self.pat_set,                        # [C, Hp, Wp]
         }
 

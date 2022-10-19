@@ -961,11 +961,8 @@ class NeuSLRenderer:
         # sampled_color = self.color_network(pt_n, None, reflect=reflect)
         # color = sampled_color
 
-        sampled_color, reflectance = self.color_network(pts_n, features)
-        sampled_color = sampled_color.reshape(batch_size, n_samples, -1)
-        reflectance = reflectance.reshape(batch_size, n_samples, -1)
-        # ab_reflect = reflect.reshape(batch_size, 1, 2).repeat(1, n_samples, 1)
-        # sampled_color = self.color_network(pts_n, features, reflect=ab_reflect.reshape(-1, 2)).reshape(batch_size, n_samples, -1)
+        projected_color = self.color_network(pts_n).reshape(batch_size, n_samples, -1)
+        sampled_color = reflect[:, None, :1] * projected_color + reflect[:, None, 1:]
         weights = self.density2weights(z_vals=z_vals, density=density)
         color = (sampled_color * weights[:, :, None]).sum(dim=1)
 
@@ -973,7 +970,7 @@ class NeuSLRenderer:
         depth_val = (pts[:, :, -1:] * weights[:, :, None]).sum(dim=1)
 
         # Reflectance field
-        brdf_val = (reflectance * weights[:, :, None]).sum(dim=1)
+        # brdf_val = (reflectance * weights[:, :, None]).sum(dim=1)
 
         return {
             'pts': pts,
@@ -982,7 +979,7 @@ class NeuSLRenderer:
             'depth': depth_val,
             'density': density,
             'z_vals': z_vals,
-            'reflectance': brdf_val,
+            # 'reflectance': brdf_val,
             # 'z_val': z_val,
             'weights': weights,
         }

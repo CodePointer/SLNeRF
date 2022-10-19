@@ -104,6 +104,10 @@ def get_args():
                         help='Pattern number set for training.',
                         default='',
                         type=str)
+    parser.add_argument('--reflect_set',
+                        help='Index of reflection images.',
+                        default='',
+                        type=str)
     parser.add_argument('--alpha_stone',
                         help='alpha value & shrink epoch for sampling.',
                         default='0-1.0',
