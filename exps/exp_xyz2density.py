@@ -260,9 +260,9 @@ class ExpXyz2DensityWorker(Worker):
             save_folder = self.res_dir / 'output' / f'e_{epoch:05}'
             save_folder.mkdir(parents=True, exist_ok=True)
             plb.imsave(save_folder / f'wrp_viz.png', res['wrp_viz'])
-            plb.imsave(save_folder / f'depth_viz.png', res['depth_viz'])
-            plb.imsave(save_folder / f'depth_map.png', res['depth_map'], scale=10.0, img_type=np.uint16)
-            np.savetxt(str(save_folder / f'depth_map.asc'), res['point_cloud'],
+            plb.imsave(save_folder / f'{self.args.run_tag}_viz.png', res['depth_viz'])
+            plb.imsave(save_folder / f'{self.args.run_tag}.png', res['depth_map'], scale=10.0, img_type=np.uint16)
+            np.savetxt(str(save_folder / f'{self.args.run_tag}.asc'), res['point_cloud'],
                        fmt='%.2f', delimiter=',', newline='\n', encoding='utf-8')
             img_folder = save_folder / 'img'
             for i, img in enumerate(res['img_list']):
@@ -330,13 +330,13 @@ class ExpXyz2DensityWorker(Worker):
                 out_rgb_fine.append(color_fine.detach().cpu())
 
             if require_contain('depth_map', 'depth_viz', 'point_cloud', 'mesh'):
-                # weights = render_out['weights']
-                # mid_z_vals = render_out['pts'][:, :, -1]
-                # max_idx = torch.argmax(weights, dim=1)  # [N]
-                # mid_z = mid_z_vals[torch.arange(max_idx.shape[0]), max_idx]
-                # out_depth.append(mid_z.detach().cpu())
-                depth_val = render_out['depth'].reshape(-1)
-                out_depth.append(depth_val.detach().cpu())
+                weights = render_out['weights']
+                mid_z_vals = render_out['pts'][:, :, -1]
+                max_idx = torch.argmax(weights, dim=1)  # [N]
+                mid_z = mid_z_vals[torch.arange(max_idx.shape[0]), max_idx]
+                out_depth.append(mid_z.detach().cpu())
+                # depth_val = render_out['depth'].reshape(-1)
+                # out_depth.append(depth_val.detach().cpu())
 
             if require_contain('query_z'):
                 out_z.append(render_out['z_vals'].detach().cpu())

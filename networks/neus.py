@@ -633,7 +633,9 @@ class NeuSLRenderer:
         z_vals, index = torch.sort(z_vals, dim=-1)
 
         if not last:
-            new_sdf = self.sdf_network.sdf(pts.reshape(-1, 3)).reshape(batch_size, n_importance)
+            pts_n = self.pts_normalize(pts)
+            new_sdf, _ = self.sdf_network.sdf(pts_n.reshape(-1, 3))
+            new_sdf = new_sdf.reshape(batch_size, n_importance)
             sdf = torch.cat([sdf, new_sdf], dim=-1)
             xx = torch.arange(batch_size)[:, None].expand(batch_size, n_samples + n_importance).reshape(-1)
             index = index.reshape(-1)

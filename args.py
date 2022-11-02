@@ -139,6 +139,16 @@ def post_process(args):
     args.res_dir_name = f'{args.argset}-{args.run_tag}'
 
     #
+    # 2. Set model dir if model_dir is '_RERUN'
+    #
+    if args.model_dir == '_OUT_DIR_RERUN':
+        args.model_dir = args.out_dir + f'/{args.argset}-{args.run_tag}' + '/model'
+    if args.exp_type == 'eval':
+        args.epoch_end = args.epoch_start + 1
+        args.report_stone = 1
+        args.save_stone = 1
+
+    #
     # 2. Write ini file to out_dir
     #
     out_config = Path(args.out_dir) / args.res_dir_name / 'params.ini'
@@ -158,7 +168,7 @@ def post_process(args):
     # 4. For distributed when you have multiple GPU cards. Only works for linux.
     #
     torch.cuda.set_device(args.local_rank)
-    if True:  # TODO: os.name == 'nt':
+    if True:  # os.name == 'nt':
         args.data_parallel = False
     else:
         init_process_group('nccl', init_method='env://')
