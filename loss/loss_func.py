@@ -89,7 +89,8 @@ class NeighborGradientLoss(BaseLoss):
 class NeighborGradientLossWithEdge(NeighborGradientLoss):
     def __init__(self, rad, name='NeighborGradientLossWithEdge', dist='l2', sigma=0.4):
         super().__init__(rad, name, dist)
-        self.dx_bias = 0.35
+        self.dx_thd = 0.5
+        self.dy_thd = 0.5
         self.sigma = sigma
 
     def forward(self, depth, mask, color=None):
@@ -101,7 +102,8 @@ class NeighborGradientLossWithEdge(NeighborGradientLoss):
             color_patch = color.reshape(pch_len, pch_len, -1, color_channel)
             dx_color = torch.abs(color_patch[:-1, 1:, :, :] - color_patch[:-1, :-1, :, :]).sum(dim=-1, keepdim=True)
             dy_color = torch.abs(color_patch[1:, :-1, :, :] - color_patch[:-1, :-1, :, :]).sum(dim=-1, keepdim=True)
-            dx_color[dx_color <= self.dx_bias] = 0.0
+            dx_color[dx_color <= self.dx_thd] = 0.0
+            dy_color[dy_color <= self.dy_thd] = 0.0
         else:
             dx_color = torch.Tensor([0.0]).to(depth.device)
             dy_color = torch.Tensor([0.0]).to(depth.device)
@@ -111,12 +113,12 @@ class NeighborGradientLossWithEdge(NeighborGradientLoss):
         x_grad = depth_patch[:-1, 1:, :, :] - depth_patch[:-1, :-1, :, :]
         x_error = self.crit(x_grad, torch.zeros_like(x_grad))
         x_mask = mask_patch[:-1, 1:, :, :] * mask_patch[:-1, :-1, :, :]
-        x_mask *= torch.exp(- dx_color * 7 / color_channel / (self.sigma ** 2))  # Color kernel
+        x_mask *= torch.exp(- dx_color / (self.sigma ** 2))  # Color kernel
 
         y_grad = depth_patch[1:, :-1, :, :] - depth_patch[:-1, :-1, :, :]
         y_error = self.crit(y_grad, torch.zeros_like(y_grad))
         y_mask = mask_patch[1:, :-1, :, :] * mask_patch[:-1, :-1, :, :]
-        y_mask *= torch.exp(- dy_color * 7 / color_channel / (self.sigma ** 2))  # Color kernel
+        y_mask *= torch.exp(- dy_color / (self.sigma ** 2))  # Color kernel
 
         grad_error = (x_error * x_mask + y_error * y_mask).sum()
         grad_base = (x_mask + y_mask).sum() + 1e-8

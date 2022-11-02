@@ -348,13 +348,13 @@ class ExpXyz2DensityWorker(Worker):
                 out_rgb_fine.append(color_fine.detach().cpu())
 
             if require_contain('depth_map', 'depth_viz', 'point_cloud', 'mesh'):
-                weights = render_out['weights']
-                mid_z_vals = render_out['pts'][:, :, -1]
-                max_idx = torch.argmax(weights, dim=1)  # [N]
-                mid_z = mid_z_vals[torch.arange(max_idx.shape[0]), max_idx]
-                out_depth.append(mid_z.detach().cpu())
-                # depth_val = render_out['depth'].reshape(-1)
-                # out_depth.append(depth_val.detach().cpu())
+                # weights = render_out['weights']
+                # mid_z_vals = render_out['pts'][:, :, -1]
+                # max_idx = torch.argmax(weights, dim=1)  # [N]
+                # mid_z = mid_z_vals[torch.arange(max_idx.shape[0]), max_idx]
+                # out_depth.append(mid_z.detach().cpu())
+                depth_val = render_out['depth'].reshape(-1)
+                out_depth.append(depth_val.detach().cpu())
 
             if require_contain('query_z'):
                 out_z.append(render_out['z_vals'].detach().cpu())
