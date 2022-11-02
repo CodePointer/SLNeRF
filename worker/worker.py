@@ -115,9 +115,10 @@ class Worker:
     def _net_parallel(self):
         for name in self.networks:
             self.networks[name] = self.networks[name].to(self.args.device)
-            self.networks[name] = torch.nn.parallel.DistributedDataParallel(
-                self.networks[name], device_ids=[self.args.local_rank], find_unused_parameters=False
-            )
+            if len(list(self.networks[name].parameters())) > 0:
+                self.networks[name] = torch.nn.parallel.DistributedDataParallel(
+                    self.networks[name], device_ids=[self.args.local_rank], find_unused_parameters=False
+                )
 
     def _net_load(self, epoch_num):
         if self.args.model_dir == '':

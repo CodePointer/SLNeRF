@@ -126,7 +126,8 @@ class ExpXyz2DensityWorker(Worker):
         # )
         config = ConfigParser()
         config.read(str(self.train_dir / 'config.ini'), encoding='utf-8')
-        self.networks['ReflectNetwork'] = WarpFromXyz(
+        # self.networks['ReflectNetwork']
+        warp_layer = WarpFromXyz(
             calib_para=config['Calibration'],
             pat_mat=self.pat_dataset.pat_set,
             bound=self.bound,
@@ -135,7 +136,7 @@ class ExpXyz2DensityWorker(Worker):
         self.renderer = NeuSLRenderer(
             sdf_network=self.networks['DensityNetwork'],
             deviation_network=None,
-            color_network=self.networks['ReflectNetwork'],
+            color_network=warp_layer,
             n_samples=64,
             n_importance=64,
             up_sample_steps=4,
@@ -161,7 +162,7 @@ class ExpXyz2DensityWorker(Worker):
                 sigma=self.args.reg_color_sigma
             )
 
-        self.loss_funcs['peak'] = PeakEncourageLoss()
+        # self.loss_funcs['peak'] = PeakEncourageLoss()
 
         self.logging(f'--loss types: {self.loss_funcs.keys()}')
         pass
@@ -347,13 +348,13 @@ class ExpXyz2DensityWorker(Worker):
                 out_rgb_fine.append(color_fine.detach().cpu())
 
             if require_contain('depth_map', 'depth_viz', 'point_cloud', 'mesh'):
-                weights = render_out['weights']
-                mid_z_vals = render_out['pts'][:, :, -1]
-                max_idx = torch.argmax(weights, dim=1)  # [N]
-                mid_z = mid_z_vals[torch.arange(max_idx.shape[0]), max_idx]
-                out_depth.append(mid_z.detach().cpu())
-                # depth_val = render_out['depth'].reshape(-1)
-                # out_depth.append(depth_val.detach().cpu())
+                # weights = render_out['weights']
+                # mid_z_vals = render_out['pts'][:, :, -1]
+                # max_idx = torch.argmax(weights, dim=1)  # [N]
+                # mid_z = mid_z_vals[torch.arange(max_idx.shape[0]), max_idx]
+                # out_depth.append(mid_z.detach().cpu())
+                depth_val = render_out['depth'].reshape(-1)
+                out_depth.append(depth_val.detach().cpu())
 
             if require_contain('query_z'):
                 out_z.append(render_out['z_vals'].detach().cpu())

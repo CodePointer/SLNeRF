@@ -147,6 +147,9 @@ def post_process(args):
     #
     if args.model_dir == '_OUT_DIR_RERUN':
         args.model_dir = args.out_dir + f'/{args.argset}-{args.run_tag}' + '/model'
+    # TODO: 临时修改
+    args.model_dir = args.model_dir + f'/{args.argset}-{args.run_tag}/model'
+    
     if args.exp_type == 'eval':
         args.epoch_end = args.epoch_start + 1
         args.report_stone = 1
@@ -172,7 +175,7 @@ def post_process(args):
     # 4. For distributed when you have multiple GPU cards. Only works for linux.
     #
     torch.cuda.set_device(args.local_rank)
-    if True:  # os.name == 'nt':
+    if os.name == 'nt':
         args.data_parallel = False
     else:
         init_process_group('nccl', init_method='env://')
