@@ -55,6 +55,8 @@ def main():
     sheet_names = workbook.get_sheet_names()
 
     pat_name_list = [x[0].value for x in workbook['err1.0']['B3':'B14']]
+
+    # Main experiments
     for scene_num in range(5):
         scene_folder = main_folder / f'scene{scene_num:02}'
         if not scene_folder.exists():
@@ -82,6 +84,28 @@ def main():
                     evaluate(depth_gt, depth_map, mask_occ, cell_set)
                     err_viz = draw_diff_viz(depth_gt, depth_map, mask_occ)
                     plb.imsave(scene_folder / exp_name / f'{pat_name}_diff.png', err_viz)
+
+        # Ablation Study
+        if scene_num == 0:
+            exp_names = [x.value for x in workbook['err1.0']['C19':'F19'][0]]
+            for col_i, exp_name in enumerate(exp_names):
+                for row_i, pat_name in enumerate(pat_name_list):
+                    depth_exp_path = scene_folder / exp_name / f'{pat_name}.png'
+                    if not depth_exp_path.exists():
+                        continue
+                    # Check if cell is empty
+                    row_idx, col_idx = row_i + 20, scene_num + col_i + 3
+                    cell_set = {x: workbook[x].cell(row_idx, col_idx) for x in sheet_names}
+                    flag_any_empty = flag_reset
+                    for _, cell in cell_set.items():
+                        if cell.value is None:
+                            flag_any_empty = True
+
+                    if flag_any_empty:
+                        depth_map = plb.imload(depth_exp_path, scale=10.0)
+                        evaluate(depth_gt, depth_map, mask_occ, cell_set)
+                        err_viz = draw_diff_viz(depth_gt, depth_map, mask_occ)
+                        plb.imsave(scene_folder / exp_name / f'{pat_name}_diff.png', err_viz)
 
     workbook.save(str(main_folder / 'CVPR2023Result.xlsx'))
 

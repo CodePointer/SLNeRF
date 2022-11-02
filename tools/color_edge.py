@@ -19,14 +19,23 @@ import pointerlib as plb
 
 # - Coding Part - #
 def main():
-    main_path = Path('C:/SLDataSet/20220907real')
+    main_path = Path('C:/SLDataSet/20221102real/scene_00')
+    pat_set = [
+        0,
+        # 1,
+        # 2,
+        3,
+        # 4,
+        5,
+        6
+    ]
 
     # Load image set
     img_set = [plb.imload(main_path / 'img' / f'img_{idx}.png') for idx in range(0, 7)]
     img_set = torch.cat(img_set, dim=0)
 
     # Load depth
-    depth_gt = plb.imload(main_path / 'depth' / f'depth_0.png', scale=10.0)
+    depth_gt = plb.imload(main_path / f'depth_map.png', scale=10.0)
     mask = plb.imload(main_path / 'mask' / 'mask_occ.png')
     depth_dx = torch.abs(depth_gt[:, :-1, 1:] - depth_gt[:, :-1, :-1])
     mask_dx = mask[:, :-1, 1:] * mask[:, :-1, :-1]
@@ -39,24 +48,34 @@ def main():
     img_dx = torch.abs(img_set[:, :-1, 1:] - img_set[:, :-1, :-1])
     img_dy = torch.abs(img_set[:, 1:, :-1] - img_set[:, :-1, :-1])
 
-    img_dx = img_dx.sum(dim=0, keepdim=True)
-    img_dy = img_dy.sum(dim=0, keepdim=True)
+    img_dx = img_dx.sum(dim=0, keepdim=True) * mask_dx
+    img_dy = img_dy.sum(dim=0, keepdim=True) * mask_dy
 
-    img_dx[img_dx < 0.35] = 0.0
+    img_dx[img_dx < 0.4] = 0.0
+    img_dy[img_dy < 0.4] = 0.0
 
     def normalize(matrix, min_val=0.0, max_val=1.0):
         matrix = torch.clamp(matrix, min_val, max_val)
         return (matrix - min_val) / (max_val - min_val)
 
-    plb.imsave('depth_dx.png', normalize(depth_dx, max_val=10.0))
-    plb.imsave('depth_dy.png', normalize(depth_dy, max_val=10.0))
-    plb.imsave('img_dx.png', img_dx)
-    plb.imsave('img_dy.png', img_dy)
+    # plb.imsave('depth_dx.png', normalize(depth_dx, max_val=10.0))
+    # plb.imsave('depth_dy.png', normalize(depth_dy, max_val=10.0))
+    # plb.imsave('img_dx.png', img_dx)
+    # plb.imsave('img_dy.png', img_dy)
 
     # plb.imviz(depth_dx, 'depth_dx', 10, normalize=[0.0, 10.0])
     # plb.imviz(img_dx, 'img_dx', 10)
     # plb.imviz(depth_dy, 'depth_dy', 10, normalize=[0.0, 10.0])
     # plb.imviz(img_dy, 'img_dy', 10)
+
+    # plt.hist(img_dx[img_dx > 0].numpy())
+    # plt.hist(img_dy[img_dy > 0].numpy())
+    # plt.show()
+
+    img_edge = img_dx + img_dy
+    img_edge[img_edge > 0.4] = 1.0
+    img_edge[img_edge < 1.0] = 0.0
+    plb.imviz(img_edge, 'img_edge', 0)
 
     print('finished.')
 

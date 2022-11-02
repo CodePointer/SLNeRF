@@ -124,9 +124,9 @@ def get_args():
                         help='Parameters for color kernel control.',
                         default=0.4,
                         type=float)
-    parser.add_argument('--peak_stone',
-                        help='peak value & shink epoch',
-                        default='0-0',
+    parser.add_argument('--ablation_tag',
+                        help='tag for ablation study.',
+                        default='',
                         type=str)
 
     args = parser.parse_args()

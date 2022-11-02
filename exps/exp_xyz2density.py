@@ -54,11 +54,11 @@ class ExpXyz2DensityWorker(Worker):
             self.reg_set.append([int(epoch_idx), float(value)])
         self.reg_ratio = self.reg_set[0][1]
 
-        self.peak_set = []
-        for pair_str in args.peak_stone.split(','):
-            epoch_idx, value = pair_str.split('-')
-            self.peak_set.append([int(epoch_idx), float(value)])
-        self.peak_ratio = self.peak_set[0][1]
+        # self.peak_set = []
+        # for pair_str in args.peak_stone.split(','):
+        #     epoch_idx, value = pair_str.split('-')
+        #     self.peak_set.append([int(epoch_idx), float(value)])
+        # self.peak_ratio = self.peak_set[0][1]
 
     def init_dataset(self):
         """
@@ -102,12 +102,12 @@ class ExpXyz2DensityWorker(Worker):
             Keys will be used for network saving.
         """
         self.networks['DensityNetwork'] = DensityNetwork(
-            d_out=1 + 256,
+            d_out=1,
             d_in=3,
             d_hidden=256,
             n_layers=8,
             skip_in=[4],
-            multires=6,
+            multires=12,
             bias=0.5,
             scale=1.0,
             geometric_init=True,
@@ -126,7 +126,7 @@ class ExpXyz2DensityWorker(Worker):
         # )
         config = ConfigParser()
         config.read(str(self.train_dir / 'config.ini'), encoding='utf-8')
-        self.networks['ReflectNetwork'] = WarpFromXyz(
+        warp_layer = WarpFromXyz(
             calib_para=config['Calibration'],
             pat_mat=self.pat_dataset.pat_set,
             bound=self.bound,
@@ -135,7 +135,7 @@ class ExpXyz2DensityWorker(Worker):
         self.renderer = NeuSLRenderer(
             sdf_network=self.networks['DensityNetwork'],
             deviation_network=None,
-            color_network=self.networks['ReflectNetwork'],
+            color_network=warp_layer,
             n_samples=64,
             n_importance=64,
             up_sample_steps=4,
@@ -154,14 +154,14 @@ class ExpXyz2DensityWorker(Worker):
         self.super_loss = SuperviseDistLoss(dist='l1')
         self.loss_funcs['color_l1'] = self.super_loss
 
-        if self.args.patch_rad > 0:
+        if self.args.patch_rad > 0 and self.args.ablation_tag != 'ours-reg':
             self.loss_funcs['gradient'] = NeighborGradientLossWithEdge(
                 rad=self.args.patch_rad,
                 dist='l2',
                 sigma=self.args.reg_color_sigma
             )
 
-        self.loss_funcs['peak'] = PeakEncourageLoss()
+        # self.loss_funcs['peak'] = PeakEncourageLoss()
 
         self.logging(f'--loss types: {self.loss_funcs.keys()}')
         pass
@@ -198,14 +198,15 @@ class ExpXyz2DensityWorker(Worker):
         )
 
         if 'gradient' in self.loss_funcs:
+            color = None if self.args.ablation_tag == 'ours-color' else data['color']
             total_loss += self.loss_record(
-                'gradient', depth=depth_res, mask=data['mask'], color=data['color']
+                'gradient', depth=depth_res, mask=data['mask'], color=color
             ) * self.reg_ratio
 
-        if 'peak' in self.loss_funcs:
-            total_loss += self.loss_record(
-                'peak', weights=weights
-            ) * self.peak_ratio
+        # if 'peak' in self.loss_funcs:
+        #     total_loss += self.loss_record(
+        #         'peak', weights=weights
+        #     ) * self.peak_ratio
 
         self.avg_meters['Total'].update(total_loss, self.N)
         return total_loss
@@ -221,10 +222,10 @@ class ExpXyz2DensityWorker(Worker):
             if reg_epoch > epoch:
                 break
             self.reg_ratio = reg_value
-        for peak_epoch, peak_value in self.peak_set:
-            if peak_epoch > epoch:
-                break
-            self.peak_ratio = peak_value
+        # for peak_epoch, peak_value in self.peak_set:
+        #     if peak_epoch > epoch:
+        #         break
+        #     self.peak_ratio = peak_value
 
     def callback_save_res(self, data, net_out, dataset, res_writer):
         """
