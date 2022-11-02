@@ -123,3 +123,18 @@ class NeighborGradientLossWithEdge(NeighborGradientLoss):
 
         val = grad_error / grad_base
         return val
+
+
+class PeakEncourageLoss(BaseLoss):
+    def __init__(self, name='PeakEncourageLoss'):
+        super().__init__(name)
+        self.cross_entropy = torch.nn.CrossEntropyLoss()
+
+    def forward(self, weights):
+        """
+            weights: [N, samples]
+        """
+        max_idx = torch.argmax(weights, dim=1)
+        res = self.cross_entropy(weights, max_idx)
+        return res
+

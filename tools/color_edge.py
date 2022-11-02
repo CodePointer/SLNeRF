@@ -44,11 +44,19 @@ def main():
 
     img_dx[img_dx < 0.35] = 0.0
 
-    plb.imviz(depth_dx, 'depth_dx', 10, normalize=[0.0, 10.0])
-    plb.imviz(img_dx, 'img_dx', 10)
+    def normalize(matrix, min_val=0.0, max_val=1.0):
+        matrix = torch.clamp(matrix, min_val, max_val)
+        return (matrix - min_val) / (max_val - min_val)
 
-    plb.imviz(depth_dy, 'depth_dy', 10, normalize=[0.0, 10.0])
-    plb.imviz(img_dy, 'img_dy', 10)
+    plb.imsave('depth_dx.png', normalize(depth_dx, max_val=10.0))
+    plb.imsave('depth_dy.png', normalize(depth_dy, max_val=10.0))
+    plb.imsave('img_dx.png', img_dx)
+    plb.imsave('img_dy.png', img_dy)
+
+    # plb.imviz(depth_dx, 'depth_dx', 10, normalize=[0.0, 10.0])
+    # plb.imviz(img_dx, 'img_dx', 10)
+    # plb.imviz(depth_dy, 'depth_dy', 10, normalize=[0.0, 10.0])
+    # plb.imviz(img_dy, 'img_dy', 10)
 
     print('finished.')
 
@@ -77,5 +85,5 @@ def softmax_test():
 
 
 if __name__ == '__main__':
-    softmax_test()
+    # softmax_test()
     main()

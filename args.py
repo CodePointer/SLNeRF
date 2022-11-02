@@ -118,12 +118,16 @@ def get_args():
                         type=int)
     parser.add_argument('--reg_stone',
                         help='reg value & shrink epoch',
-                        default='0-0,1000-0.0001',
+                        default='0-0',
                         type=str)
     parser.add_argument('--reg_color_sigma',
                         help='Parameters for color kernel control.',
                         default=0.4,
                         type=float)
+    parser.add_argument('--peak_stone',
+                        help='peak value & shink epoch',
+                        default='0-0',
+                        type=str)
 
     args = parser.parse_args()
     return args

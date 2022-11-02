@@ -13,7 +13,7 @@ from worker.worker import Worker
 import pointerlib as plb
 from dataset.multi_pat_dataset import MultiPatDataset
 
-from loss.loss_func import SuperviseDistLoss, NeighborGradientLossWithEdge
+from loss.loss_func import SuperviseDistLoss, NeighborGradientLossWithEdge, PeakEncourageLoss
 from networks.layers import WarpFromXyz, PatternSampler
 from networks.neus import NeuSLRenderer, DensityNetwork, ReflectNetwork
 
@@ -53,6 +53,12 @@ class ExpXyz2DensityWorker(Worker):
             epoch_idx, value = pair_str.split('-')
             self.reg_set.append([int(epoch_idx), float(value)])
         self.reg_ratio = self.reg_set[0][1]
+
+        self.peak_set = []
+        for pair_str in args.peak_stone.split(','):
+            epoch_idx, value = pair_str.split('-')
+            self.peak_set.append([int(epoch_idx), float(value)])
+        self.peak_ratio = self.peak_set[0][1]
 
     def init_dataset(self):
         """
@@ -155,6 +161,8 @@ class ExpXyz2DensityWorker(Worker):
                 sigma=self.args.reg_color_sigma
             )
 
+        self.loss_funcs['peak'] = PeakEncourageLoss()
+
         self.logging(f'--loss types: {self.loss_funcs.keys()}')
         pass
 
@@ -176,14 +184,14 @@ class ExpXyz2DensityWorker(Worker):
             The output will be passed to :loss_forward().
         """
         render_out = self.renderer.render_density(data['rays_v'], reflect=data['reflect'], alpha=self.alpha)
-        return render_out['color'], render_out['depth']
+        return render_out['color'], render_out['depth'], render_out['weights']
 
     def loss_forward(self, net_out, data):
         """
             How loss functions process the output from network and input data.
             The output will be used with err.backward().
         """
-        color_fine, depth_res = net_out
+        color_fine, depth_res, weights = net_out
         total_loss = torch.zeros(1).to(self.device)
         total_loss += self.loss_record(
             'color_l1', pred=color_fine, target=data['color']
@@ -193,6 +201,11 @@ class ExpXyz2DensityWorker(Worker):
             total_loss += self.loss_record(
                 'gradient', depth=depth_res, mask=data['mask'], color=data['color']
             ) * self.reg_ratio
+
+        if 'peak' in self.loss_funcs:
+            total_loss += self.loss_record(
+                'peak', weights=weights
+            ) * self.peak_ratio
 
         self.avg_meters['Total'].update(total_loss, self.N)
         return total_loss
@@ -208,6 +221,10 @@ class ExpXyz2DensityWorker(Worker):
             if reg_epoch > epoch:
                 break
             self.reg_ratio = reg_value
+        for peak_epoch, peak_value in self.peak_set:
+            if peak_epoch > epoch:
+                break
+            self.peak_ratio = peak_value
 
     def callback_save_res(self, data, net_out, dataset, res_writer):
         """
