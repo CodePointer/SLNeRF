@@ -107,7 +107,7 @@ class ExpXyz2DensityWorker(Worker):
             d_hidden=256,
             n_layers=8,
             skip_in=[4],
-            multires=12,
+            multires=self.args.multires,  # TODO: Origin=6
             bias=0.5,
             scale=1.0,
             geometric_init=True,

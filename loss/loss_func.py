@@ -89,8 +89,8 @@ class NeighborGradientLoss(BaseLoss):
 class NeighborGradientLossWithEdge(NeighborGradientLoss):
     def __init__(self, rad, name='NeighborGradientLossWithEdge', dist='l2', sigma=0.4):
         super().__init__(rad, name, dist)
-        self.dx_thd = 0.5
-        self.dy_thd = 0.5
+        self.dx_thd = 0.35
+        self.dy_thd = 0.35
         self.sigma = sigma
 
     def forward(self, depth, mask, color=None):

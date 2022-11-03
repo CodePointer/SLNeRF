@@ -102,7 +102,7 @@ class WarpFromXyz(torch.nn.Module):
         self.bound = bound
         self.center_pt = (bound[1] + bound[0]) / 2.0
         self.center_pt = self.center_pt.reshape(1, -1)  # [1, 3]
-        self.scale = (bound[1] - bound[0])
+        self.scale = (bound[1] - bound[0]) * 0.5
         self.scale = self.scale.reshape(1, -1)  # [1, 3]
         self.pat_mat = pat_mat.unsqueeze(0)  # [1, C, Hs, Ws]
 

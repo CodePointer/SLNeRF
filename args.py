@@ -128,6 +128,10 @@ def get_args():
                         help='tag for ablation study.',
                         default='',
                         type=str)
+    parser.add_argument('--multires',
+                        help='multires in embedder.',
+                        default=6,
+                        type=int)
 
     args = parser.parse_args()
     return args
@@ -147,8 +151,6 @@ def post_process(args):
     #
     if args.model_dir == '_OUT_DIR_RERUN':
         args.model_dir = args.out_dir + f'/{args.argset}-{args.run_tag}' + '/model'
-    # TODO: 临时修改
-    args.model_dir = args.model_dir + f'/{args.argset}-{args.run_tag}/model'
     
     if args.exp_type == 'eval':
         args.epoch_end = args.epoch_start + 1

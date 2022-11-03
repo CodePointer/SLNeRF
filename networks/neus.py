@@ -810,7 +810,7 @@ class NeuSLRenderer:
 
     def pts_normalize(self, pts):
         bound_min, bound_max = self.bound
-        scale = (bound_max - bound_min)
+        scale = (bound_max - bound_min) * 0.5
         center_pt = (bound_max + bound_min) / 2.0
         pts_normalized = (pts - center_pt) / scale
         return pts_normalized

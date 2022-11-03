@@ -78,15 +78,17 @@ class MultiPatDataset(torch.utils.data.Dataset):
 
     def get_bound(self):
         fx, fy, dx, dy = self.intrinsics
-        # hei, wid = self.img_size
-        wid, hei = self.img_size
+        # wid, hei = self.img_size
+        hei_set, wid_set = torch.where(self.mask_occ[0] > 0)
+        w_min, w_max = wid_set.min(), wid_set.max()
+        h_min, h_max = hei_set.min(), hei_set.max()
         # z_min, z_max = 300.0, 900.0
         z_min, z_max = 500.0, 1500.0
 
-        x_min = (0.0 - dx) / fx * z_max
-        x_max = (wid - dx) / fx * z_max
-        y_min = (0.0 - dy) / fy * z_max
-        y_max = (hei - dy) / fy * z_max
+        x_min = (w_min - dx) / fx * z_max
+        x_max = (w_max - dx) / fx * z_max
+        y_min = (h_min - dy) / fy * z_max
+        y_max = (h_max - dy) / fy * z_max
 
         bound = torch.Tensor([
             [x_min, y_min, z_min],
