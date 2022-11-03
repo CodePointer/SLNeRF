@@ -969,7 +969,9 @@ class NeuSLRenderer:
         color = (sampled_color * weights[:, :, None]).sum(dim=1)
 
         # Compute depth
-        depth_val = (pts[:, :, -1:] * weights[:, :, None]).sum(dim=1)
+        pts_sum = (pts * weights[:, :, None]).sum(dim=1)
+        color_1pt = reflect[:, :1] * self.color_network(self.pts_normalize(pts_sum)) + reflect[:, 1:]
+        depth_val = pts_sum[:, -1:]
 
         # Reflectance field
         # brdf_val = (reflectance * weights[:, :, None]).sum(dim=1)
@@ -978,6 +980,7 @@ class NeuSLRenderer:
             'pts': pts,
             'pt_color': sampled_color,
             'color': color,
+            'color_1pt': color_1pt,
             'depth': depth_val,
             'density': density,
             'z_vals': z_vals,

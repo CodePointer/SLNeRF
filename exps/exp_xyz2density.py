@@ -42,6 +42,8 @@ class ExpXyz2DensityWorker(Worker):
         self.anneal_ratio = 1.0
         self.anneal_end = 50000
 
+        self.warp_alpha = 1.0
+
         self.alpha_set = []
         for pair_str in args.alpha_stone.split(','):
             epoch_idx, value = pair_str.split('-')
@@ -153,6 +155,7 @@ class ExpXyz2DensityWorker(Worker):
         """
         self.super_loss = SuperviseDistLoss(dist='l1')
         self.loss_funcs['color_l1'] = self.super_loss
+        self.loss_funcs['color_1pt_l1'] = self.super_loss
 
         if self.args.patch_rad > 0 and self.args.ablation_tag != 'ours-reg':
             self.loss_funcs['gradient'] = NeighborGradientLossWithEdge(
@@ -184,23 +187,27 @@ class ExpXyz2DensityWorker(Worker):
             The output will be passed to :loss_forward().
         """
         render_out = self.renderer.render_density(data['rays_v'], reflect=data['reflect'], alpha=self.alpha)
-        return render_out['color'], render_out['depth'], render_out['weights']
+        return render_out
+        # return render_out['color'], render_out['color_1pt'], render_out['depth'], render_out['weights']
 
     def loss_forward(self, net_out, data):
         """
             How loss functions process the output from network and input data.
             The output will be used with err.backward().
         """
-        color_fine, depth_res, weights = net_out
+        # color_fine, depth_res, weights = net_out
         total_loss = torch.zeros(1).to(self.device)
         total_loss += self.loss_record(
-            'color_l1', pred=color_fine, target=data['color']
+            'color_l1', pred=net_out['color'], target=data['color']
         )
+        total_loss += self.loss_record(
+            'color_1pt_l1', pred=net_out['color_1pt'], target=data['color']
+        ) * self.warp_alpha
 
         if 'gradient' in self.loss_funcs:
             color = None if self.args.ablation_tag == 'ours-color' else data['color']
             total_loss += self.loss_record(
-                'gradient', depth=depth_res, mask=data['mask'], color=color
+                'gradient', depth=net_out['depth'], mask=data['mask'], color=color
             ) * self.reg_ratio
 
         # if 'peak' in self.loss_funcs:
@@ -333,6 +340,7 @@ class ExpXyz2DensityWorker(Worker):
         rays_d_set = rays_d.split(self.sample_num * pch_num)
         reflect_set = reflect.split(self.sample_num * pch_num)
         out_rgb_fine = []
+        out_rgb_1pt = []
         out_reflectance = []
         out_depth = []
         out_z = []
@@ -346,6 +354,7 @@ class ExpXyz2DensityWorker(Worker):
             if require_contain('img_list', 'wrp_viz'):
                 color_fine = render_out['color']  # [N, C]
                 out_rgb_fine.append(color_fine.detach().cpu())
+                out_rgb_1pt.append(render_out['color_1pt'].detach().cpu())
 
             if require_contain('depth_map', 'depth_viz', 'point_cloud', 'mesh'):
                 # weights = render_out['weights']
@@ -383,6 +392,16 @@ class ExpXyz2DensityWorker(Worker):
                 img_viz = pvf.img_visual(img_fine)
                 img_render_list.append(img_viz)
 
+            img_set = torch.cat(out_rgb_1pt, dim=0).permute(1, 0)
+            channel = img_set.shape[0]
+            img_all = torch.zeros([channel, total_ray], dtype=img_set.dtype).to(img_set.device)
+            img_all.scatter_(1, idx.reshape(1, -1).repeat(channel, 1), img_set)
+            img_warp_list = []
+            for c in range(channel):
+                img_fine = img_all[c].reshape(img_wid, img_hei).permute(1, 0)
+                img_viz = pvf.img_visual(img_fine)
+                img_warp_list.append(img_viz)
+
             if require_contain('img_list'):
                 res['img_list'] = img_render_list
 
@@ -394,7 +413,7 @@ class ExpXyz2DensityWorker(Worker):
                     img_gt = img_input_re[c]
                     img_viz = pvf.img_visual(img_gt)
                     img_gt_list.append(img_viz)
-                wrp_viz = pvf.img_concat(img_render_list + img_gt_list, 2, channel, transpose=False)
+                wrp_viz = pvf.img_concat(img_warp_list + img_render_list + img_gt_list, 3, channel, transpose=False)
                 res['wrp_viz'] = wrp_viz
 
         if require_contain('depth_map', 'depth_viz', 'point_cloud', 'mesh'):

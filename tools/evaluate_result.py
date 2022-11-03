@@ -9,6 +9,7 @@
 #   This file is used for depth map evaluation.
 
 # - Package Imports - #
+from configparser import ConfigParser
 from pathlib import Path
 import numpy as np
 import cv2
@@ -19,6 +20,10 @@ import pointerlib as plb
 
 
 # - Coding Part - #
+from dataset.multi_pat_dataset import MultiPatDataset
+from networks.layers import WarpFromDepth
+
+
 def evaluate(depth_gt, depth_map, mask, cell_set):
     diff = (depth_gt - depth_map)
     diff_vec = diff[mask > 0.0]
@@ -50,7 +55,7 @@ def draw_diff_viz(depth_gt, depth_map, mask):
 
 def main():
     flag_reset = False
-    main_folder = Path('C:/SLDataSet/20221028real/CVPR2023')
+    main_folder = Path('C:/SLDataSet/20221102real/CVPR2023')
     workbook = openpyxl.load_workbook(str(main_folder / 'CVPR2023Result.xlsx'))
     sheet_names = workbook.get_sheet_names()
 
@@ -110,5 +115,47 @@ def main():
     workbook.save(str(main_folder / 'CVPR2023Result.xlsx'))
 
 
+def test():
+    depth_map = plb.imload('pat5m10.png', scale=10.0)
+    mask_occ = plb.imload(r'C:\SLDataSet\20220907real\mask\mask_occ.png')
+
+    config = ConfigParser()
+    train_dir = Path('C:/SLDataSet/20220907real')
+    config.read(str(train_dir / 'config.ini'), encoding='utf-8')
+
+    pat_idx_set = [0, 1, 2, 3, 4]
+    ref_img_set = [41, 40]
+    my_device = torch.device('cpu')
+    pat_dataset = MultiPatDataset(
+        scene_folder=train_dir,
+        pat_idx_set=pat_idx_set,
+        ref_img_set=ref_img_set,
+        sample_num=50,
+        calib_para=config['Calibration'],
+        device=my_device,
+        rad=2
+    )
+
+    # warp_layer = WarpFromXyz(
+    #     calib_para=config['Calibration'],
+    #     pat_mat=self.pat_dataset.pat_set,
+    #     bound=self.bound,
+    #     device=self.device
+    # )
+    warp_layer = WarpFromDepth(
+        calib_para=config['Calibration'],
+        device=my_device
+    )
+
+    imgs = warp_layer(
+        depth_mat=depth_map.unsqueeze(0),
+        src_mat=pat_dataset.pat_set.unsqueeze(0),
+    )
+
+    plb.imviz_loop(imgs, 'imgs', 10)
+
+    pass
+
+
 if __name__ == '__main__':
-    main()
+    test()

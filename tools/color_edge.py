@@ -22,7 +22,7 @@ def main():
     main_path = Path('C:/SLDataSet/20221102real/scene_00')
     pat_set = [
         0,
-        # 1,
+        1,
         # 2,
         3,
         # 4,
@@ -31,7 +31,7 @@ def main():
     ]
 
     # Load image set
-    img_set = [plb.imload(main_path / 'img' / f'img_{idx}.png') for idx in range(0, 7)]
+    img_set = [plb.imload(main_path / 'img' / f'img_{idx}.png') for idx in pat_set]
     img_set = torch.cat(img_set, dim=0)
 
     # Load depth
@@ -51,8 +51,8 @@ def main():
     img_dx = img_dx.sum(dim=0, keepdim=True) * mask_dx
     img_dy = img_dy.sum(dim=0, keepdim=True) * mask_dy
 
-    img_dx[img_dx < 0.4] = 0.0
-    img_dy[img_dy < 0.4] = 0.0
+    # img_dx[img_dx < 0.35] = 0.0
+    # img_dy[img_dy < 0.35] = 0.0
 
     def normalize(matrix, min_val=0.0, max_val=1.0):
         matrix = torch.clamp(matrix, min_val, max_val)
@@ -64,7 +64,7 @@ def main():
     # plb.imsave('img_dy.png', img_dy)
 
     # plb.imviz(depth_dx, 'depth_dx', 10, normalize=[0.0, 10.0])
-    # plb.imviz(img_dx, 'img_dx', 10)
+    plb.imviz(img_dx, 'img_dx', 0)
     # plb.imviz(depth_dy, 'depth_dy', 10, normalize=[0.0, 10.0])
     # plb.imviz(img_dy, 'img_dy', 10)
 
