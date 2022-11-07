@@ -19,7 +19,7 @@ from networks.neus import NeuSLRenderer, DensityNetwork, ReflectNetwork
 
 
 # - Coding Part - #
-class ExpXyz2DensityWorker(Worker):
+class ExpVanillaNeRF(Worker):
     def __init__(self, args):
         """
             Please add all parameters will be used in the init function.
@@ -31,24 +31,14 @@ class ExpXyz2DensityWorker(Worker):
         self.pat_dataset = None
         self.sample_num = self.args.batch_num
         self.bound = None
+        self.warp_layer = None
 
         # init_networks()
         self.renderer = None
 
         # init_losses()
         self.super_loss = None
-
-        self.alpha_set = []
-        for pair_str in args.alpha_stone.split(','):
-            epoch_idx, value = pair_str.split('-')
-            self.alpha_set.append([int(epoch_idx), float(value)])
-        self.alpha = self.alpha_set[0][1]
-
-        self.lambda_set = []
-        for pair_str in args.lambda_stone.split(','):
-            epoch_idx, value = pair_str.split('-')
-            self.lambda_set.append([int(epoch_idx), float(value)])
-        self.warp_lambda = 1.0
+        self.alpha = None
 
     def init_dataset(self):
         """
@@ -81,6 +71,7 @@ class ExpXyz2DensityWorker(Worker):
         if self.args.save_stone > 0:
             self.res_writers.append(self.create_res_writers())
 
+        # Init warp_layer
         self.bound = self.pat_dataset.get_bound()
         self.logging(f'--train_dir: {self.train_dir}')
 
@@ -149,8 +140,7 @@ class ExpXyz2DensityWorker(Worker):
             How networks process input data and give out network output.
             The output will be passed to :loss_forward().
         """
-        alpha_val = self.alpha if self.args.ablation_tag != 'ours-samp' else None
-        render_out = self.renderer.render_density(data['rays_v'], reflect=data['reflect'], alpha=alpha_val)
+        render_out = self.renderer.render_density(data['rays_v'], reflect=data['reflect'], alpha=self.alpha)
         return render_out
 
     def loss_forward(self, net_out, data):
@@ -163,21 +153,11 @@ class ExpXyz2DensityWorker(Worker):
         total_loss += self.loss_record(
             'color_l1', pred=net_out['color'], target=data['color']
         )
-        total_loss += self.loss_record(
-            'color_1pt_l1', pred=net_out['color_1pt'], target=data['color']
-        ) * self.warp_lambda
         self.avg_meters['Total'].update(total_loss, self.N)
         return total_loss
 
     def callback_after_train(self, epoch):
-        for alpha_pair in self.alpha_set:
-            if alpha_pair[0] > epoch:
-                break
-            self.alpha = alpha_pair[1]
-        for lambda_epoch, lambda_value in self.lambda_set:
-            if lambda_epoch > epoch:
-                break
-            self.warp_lambda = lambda_value
+        pass
 
     def callback_save_res(self, data, net_out, dataset, res_writer):
         """

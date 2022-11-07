@@ -112,18 +112,10 @@ def get_args():
                         help='alpha value & shrink epoch for sampling.',
                         default='0-1.0',
                         type=str)
-    parser.add_argument('--patch_rad',
-                        help='Sampled patch radiace for training. Patch side length = 2 * patch_rad + 1',
-                        default=0,
-                        type=int)
-    parser.add_argument('--reg_stone',
-                        help='reg value & shrink epoch',
-                        default='0-0',
+    parser.add_argument('--lambda_stone',
+                        help='lambda to leverage warping loss.',
+                        default='0-0.0',
                         type=str)
-    parser.add_argument('--reg_color_sigma',
-                        help='Parameters for color kernel control.',
-                        default=0.4,
-                        type=float)
     parser.add_argument('--ablation_tag',
                         help='tag for ablation study.',
                         default='',

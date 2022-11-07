@@ -49,20 +49,20 @@ class MultiPatDataset(torch.utils.data.Dataset):
         # pixel_coord = plb.a2t(pixel_coord, permute=False).reshape(2, -1)
         # self.valid_coord = pixel_coord[:, self.mask_occ.reshape(-1)].to(torch.long)  # [2, N]
 
-        pch_len = 2 * rad + 1
+        self.pch_len = 2 * rad + 1
         pixel_coord = np.stack(np.meshgrid(np.arange(self.img_size[1]), np.arange(self.img_size[0])), axis=0)
         pixel_coord = plb.a2t(pixel_coord, permute=False).unsqueeze(0)  # [1, 2, H, W]
-        pixel_unfold = torch.nn.functional.unfold(pixel_coord.float(), (pch_len, pch_len), padding=rad)  # [1, 2 * pch_len**2, H * W]
+        pixel_unfold = torch.nn.functional.unfold(pixel_coord.float(), (self.pch_len, self.pch_len), padding=rad)  # [1, 2 * pch_len**2, H * W]
         self.mask_occ = torch.ones([1, *self.img_size], dtype=torch.float)
         if (scene_folder / 'mask' / 'mask_occ.png').exists():
             self.mask_occ = plb.imload(scene_folder / 'mask' / 'mask_occ.png')
-        mask_unfold = torch.nn.functional.unfold(self.mask_occ.unsqueeze(0), (pch_len, pch_len), padding=rad)  # [1, 2 * pch_len**2, H * W]
+        mask_unfold = torch.nn.functional.unfold(self.mask_occ.unsqueeze(0), (self.pch_len, self.pch_len), padding=rad)  # [1, 2 * pch_len**2, H * W]
         mask_bool = self.mask_occ.to(torch.bool).reshape(-1)  # [H * W]
-        self.valid_patch = pixel_unfold[0, :, mask_bool].to(torch.long).reshape(2, pch_len, pch_len, -1).long()  # [2, pch_len, pch_len, L]
-        self.valid_mask = mask_unfold[0, :, mask_bool].reshape(1, pch_len, pch_len, -1)  # [1, pch_len, pch_len, L]
+        self.valid_patch = pixel_unfold[0, :, mask_bool].to(torch.long).reshape(2, self.pch_len, self.pch_len, -1).long()  # [2, pch_len, pch_len, L]
+        self.valid_mask = mask_unfold[0, :, mask_bool].reshape(1, self.pch_len, self.pch_len, -1)  # [1, pch_len, pch_len, L]
 
         # Get coord
-        self.rays_o = torch.zeros(size=[pch_len ** 2 * self.sample_num, 3], device=device)
+        self.rays_o = torch.zeros(size=[self.pch_len ** 2 * self.sample_num, 3], device=device)
 
         self.img_set = self.img_set.to(device)
         self.pat_set = self.pat_set.to(device)
@@ -75,6 +75,9 @@ class MultiPatDataset(torch.utils.data.Dataset):
 
     def __len__(self):
         return 1
+
+    def get_pch_len(self):
+        return self.pch_len
 
     def get_bound(self):
         fx, fy, dx, dy = self.intrinsics
