@@ -42,7 +42,7 @@ class ExpXyz2DensityWorker(Worker):
         self.anneal_ratio = 1.0
         self.anneal_end = 50000
 
-        self.warp_alpha = 1.0
+        # self.warp_alpha = 1.0
 
         self.alpha_set = []
         for pair_str in args.alpha_stone.split(','):
@@ -202,13 +202,13 @@ class ExpXyz2DensityWorker(Worker):
         )
         total_loss += self.loss_record(
             'color_1pt_l1', pred=net_out['color_1pt'], target=data['color']
-        ) * self.warp_alpha
+        ) * self.reg_ratio
 
-        if 'gradient' in self.loss_funcs:
-            color = None if self.args.ablation_tag == 'ours-color' else data['color']
-            total_loss += self.loss_record(
-                'gradient', depth=net_out['depth'], mask=data['mask'], color=color
-            ) * self.reg_ratio
+        # if 'gradient' in self.loss_funcs:
+        #     color = None if self.args.ablation_tag == 'ours-color' else data['color']
+        #     total_loss += self.loss_record(
+        #         'gradient', depth=net_out['depth'], mask=data['mask'], color=color
+        #     ) * self.reg_ratio
 
         # if 'peak' in self.loss_funcs:
         #     total_loss += self.loss_record(
