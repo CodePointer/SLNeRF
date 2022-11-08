@@ -141,10 +141,12 @@ class SDFNetwork(nn.Module):
 
             if l < self.num_layers - 2:
                 x = self.activation(x)
-        return torch.cat([x[:, :1] / self.scale, x[:, 1:]], dim=-1)
+        return x[:, :1] / self.scale, x[:, 1:]
+        # return torch.cat([x[:, :1] / self.scale, x[:, 1:]], dim=-1)
 
     def sdf(self, x):
-        return self.forward(x)[:, :1]
+        return self.forward(x)
+        # return self.forward(x)[:, :1]
 
     def sdf_hidden_appearance(self, x):
         return self.forward(x)
@@ -152,7 +154,7 @@ class SDFNetwork(nn.Module):
     def gradient(self, x):
         x.requires_grad_(True)
         with torch.enable_grad():
-            y = self.sdf(x)
+            y, _ = self.sdf(x)
             d_output = torch.ones_like(y, requires_grad=False, device=y.device)
             gradients = torch.autograd.grad(
                 outputs=y,
@@ -367,35 +369,35 @@ def extract_fields(normalize_func, vol_bound, resolution, query_func):
     Z = torch.linspace(bound_min[2], bound_max[2], resolution).split(N)
 
     u = np.zeros([resolution, resolution, resolution], dtype=np.float32)
-    pts_set = []
+    # pts_set = []
     with torch.no_grad():
         for xi, xs in enumerate(X):
             for yi, ys in enumerate(Y):
                 for zi, zs in enumerate(Z):
                     xx, yy, zz = torch.meshgrid(xs, ys, zs)
                     pts = torch.cat([xx.reshape(-1, 1), yy.reshape(-1, 1), zz.reshape(-1, 1)], dim=-1).to(bound_min.device)
-                    pts_set.append(pts.detach().cpu())
+                    # pts_set.append(pts.detach().cpu())
                     pts = normalize_func(pts)
                     val = query_func(pts).reshape(len(xs), len(ys), len(zs)).detach().cpu().numpy()
                     u[xi * N: xi * N + len(xs), yi * N: yi * N + len(ys), zi * N: zi * N + len(zs)] = val
-    pts_set = torch.cat(pts_set, dim=0)
-    return u, pts_set
+    # pts_set = torch.cat(pts_set, dim=0)
+    return u
 
 
 # This code was taken from NeuS: https://github.com/Totoro97/NeuS
 def extract_geometry(normalize_func, vol_bound, resolution, threshold, query_func):
     print('threshold: {}'.format(threshold))
-    u, pts_set = extract_fields(normalize_func, vol_bound, resolution, query_func)
-    min_z_idx = np.argmin(np.abs(u), axis=2).reshape(resolution, resolution, 1, 1).repeat(3, axis=3)
-    pts_volume = pts_set.reshape(resolution, resolution, resolution, -1)
-    pts_select = np.take_along_axis(pts_volume, min_z_idx, axis=2)
+    u = extract_fields(normalize_func, vol_bound, resolution, query_func)
+    # min_z_idx = np.argmin(np.abs(u), axis=2).reshape(resolution, resolution, 1, 1).repeat(3, axis=3)
+    # pts_volume = pts_set.reshape(resolution, resolution, resolution, -1)
+    # pts_select = np.take_along_axis(pts_volume, min_z_idx, axis=2)
     vertices, triangles = mcubes.marching_cubes(u, threshold)
     bound_min, bound_max = vol_bound
     b_max_np = bound_max.detach().cpu().numpy()
     b_min_np = bound_min.detach().cpu().numpy()
 
     vertices = vertices / (resolution - 1.0) * (b_max_np - b_min_np)[None, :] + b_min_np[None, :]
-    return vertices, triangles, pts_set, pts_select.reshape(-1, 3)
+    return vertices, triangles  #, pts_set, pts_select.reshape(-1, 3)
 
 
 # This code was taken from NeuS: https://github.com/Totoro97/NeuS
@@ -665,6 +667,7 @@ class NeuSLRenderer:
         # Section midpoints
         pts = rays_o[:, None, :] + rays_d[:, None, :] * mid_z_vals[..., :, None]  # n_rays, n_samples, 3
         dirs = rays_d[:, None, :].expand(pts.shape)
+
         pts_bk = pts.detach().cpu().clone()
 
         pts = pts.reshape(-1, 3)
@@ -672,7 +675,8 @@ class NeuSLRenderer:
         dirs = dirs.reshape(-1, 3)
 
         sdf_nn_output = sdf_network(pts)
-        sdf = sdf_nn_output[:, :1]
+        sdf = sdf_nn_output[0]
+        # sdf = sdf_nn_output[:, :1]
         # feature_vector = sdf_nn_output[:, 1:]
 
         gradients = sdf_network.gradient(pts).squeeze()
@@ -704,7 +708,7 @@ class NeuSLRenderer:
         inside_sphere = (pts_norm < 1.0).float().detach()
         relax_inside_sphere = (pts_norm < 1.2).float().detach()
 
-        # Render with background 这里我直接把background去除了。
+        # Render with background
         # if background_alpha is not None:
         #     alpha = alpha * inside_sphere + background_alpha[:, :n_samples] * (1.0 - inside_sphere)
         #     alpha = torch.cat([alpha, background_alpha[:, n_samples:]], dim=-1)
@@ -714,7 +718,7 @@ class NeuSLRenderer:
 
         weights = alpha * torch.cumprod(torch.cat([torch.ones([batch_size, 1], device=rays_d.device),
                                                    1. - alpha + 1e-7], -1), -1)[:, :-1]
-        weights_sum = weights.sum(dim=-1, keepdim=True)
+        # weights_sum = weights.sum(dim=-1, keepdim=True)
 
         color = (sampled_color * weights[:, :, None]).sum(dim=1)
         # if background_rgb is not None:    # Fixed background, usually black
@@ -724,75 +728,6 @@ class NeuSLRenderer:
         gradient_error = (torch.linalg.norm(gradients.reshape(batch_size, n_samples, 3), ord=2,
                                             dim=-1) - 1.0) ** 2
         gradient_error = (relax_inside_sphere * gradient_error).sum() / (relax_inside_sphere.sum() + 1e-5)
-
-        # DEBUG: check
-        query_idx = 120
-        z_val = mid_z_vals[query_idx].detach().cpu().numpy()
-        sdf_volume = sdf.view(mid_z_vals.shape[:2])
-        wei_val = weights[query_idx].detach().cpu().numpy()
-
-        sigmoid_val = torch.sigmoid(sdf_volume)  # [N, C]
-        z_val_step = mid_z_vals[:, 1:] - mid_z_vals[:, :-1]
-        ntr = (sigmoid_val[:, :-1] - sigmoid_val[:, 1:]) / (z_val_step + 1e-7)
-        dentr = sigmoid_val[:, :-1]
-        alpha_dis = (ntr / dentr).clip(0.0, 1.0)  # [N, C - 1]
-        alpha_dis = torch.cat([
-            alpha_dis,
-            torch.zeros([batch_size, 1], device=rays_d.device)
-        ], dim=1)  # [N, C]
-        ntr_grad = sdf_network.gradient_ray(z=mid_z_vals, ray=rays_d).squeeze()
-        # alpha_dis = (ntr_grad / sigmoid_val).clip(0.0, 1.0)
-        # z_val_lst = mid_z_vals - 0.1
-        # pts_lst = (rays_d[:, None, :] * z_val_lst[..., :, None]).reshape(-1, 3)
-        # sdf_lst = sdf_network(self.pts_normalize(pts_lst))[:, :1].reshape(sdf_volume.shape)
-        # sigmoid_lst = torch.sigmoid(sdf_lst)
-        # ntr_lst = (sigmoid_lst - sigmoid_val) / 0.1
-
-        acc_trans = torch.cumprod(torch.cat([
-            torch.ones([batch_size, 1], device=rays_d.device),
-            (1 - alpha_dis) + 1e-7,
-        ], dim=1), dim=1)[:, 1:]
-        weight_dis = alpha_dis * acc_trans
-
-        sdf_val = sdf_volume[query_idx].detach().cpu().numpy()
-        if sdf_val.min() <= 0.05:
-            alpha_val = alpha[query_idx].detach().cpu().numpy()
-            # plt.plot(z_val, sdf_val)
-            # plt.plot(z_val, alpha_val)
-            a_dis = alpha_dis[query_idx].detach().cpu().numpy()
-            plt.plot(z_val, a_dis)
-            # plt.plot(z_val, wei_val)
-            w_dis = weight_dis[query_idx].detach().cpu().numpy()
-            plt.plot(z_val, w_dis)
-            plt.legend([
-                # 'sdf',
-                # 'alpha_con',
-                'alpha_dis',
-                # 'wei_con',
-                'wei_dis',
-            ])
-            plt.show()
-
-            plt.plot(z_val, sdf_val)
-            s_val = sigmoid_val[query_idx].detach().cpu().numpy()
-            plt.plot(z_val, s_val)
-            plt.legend([
-                'sdf',
-                'sigmoid',
-            ])
-            plt.show()
-
-            # NTR check
-            ntr_dis = ntr[query_idx].detach().cpu().numpy() / ntr[query_idx].sum().detach().cpu().numpy()
-            ntr_grd = ntr_grad[query_idx].detach().cpu().numpy() / ntr_grad[query_idx].sum().detach().cpu().numpy()
-            # ntr_lst_vec = ntr_lst[query_idx].detach().cpu().numpy() / ntr_lst[query_idx].sum().detach().cpu().numpy()
-            plt.plot(z_val[:-1], ntr_dis)
-            plt.plot(z_val, ntr_grd)
-            # plt.plot(z_val, ntr_lst_vec)
-            plt.legend(['ntr_dis', 'ntr_grd'])
-            plt.show()
-
-            print('ploted.')
 
         return {
             'pts': pts_bk,
@@ -851,7 +786,8 @@ class NeuSLRenderer:
             with torch.no_grad():
                 pts = rays_o[:, None, :] + rays_d[:, None, :] * z_vals[..., :, None]
                 pts_n = self.pts_normalize(pts)
-                sdf = self.sdf_network.sdf(pts_n.reshape(-1, 3)).reshape(batch_size, self.n_samples)
+                sdf, _ = self.sdf_network.sdf(pts_n.reshape(-1, 3))
+                sdf = sdf.reshape(batch_size, self.n_samples)
 
                 for i in range(self.up_sample_steps):
                     new_z_vals = self.up_sample(rays_o,
@@ -860,8 +796,7 @@ class NeuSLRenderer:
                                                 sdf,
                                                 self.n_importance // self.up_sample_steps,
                                                 64 * 2**i)
-                    z_vals, sdf = self.cat_z_vals(rays_o,
-                                                  rays_d,
+                    z_vals, sdf = self.cat_z_vals(rays_d,
                                                   z_vals,
                                                   new_z_vals,
                                                   sdf,
@@ -983,7 +918,7 @@ class NeuSLRenderer:
                                 vol_bound=vol_bound,
                                 resolution=resolution,
                                 threshold=threshold,
-                                query_func=lambda pts: -self.sdf_network.sdf(pts))
+                                query_func=lambda pts: -self.sdf_network.sdf(pts)[0])
 
     def extract_proj_geometry(self, rays_d, img_size, bound, z_resolution, threshold=0.0):
         return extract_proj_geometry(normalize_func=self.pts_normalize,
