@@ -32,10 +32,10 @@ def evaluate(depth_gt, depth_map, mask, cell_set):
     err20_num = (torch.abs(diff_vec) > 2.0).float().sum()
     err50_num = (torch.abs(diff_vec) > 5.0).float().sum()
     avg = torch.abs(diff_vec).sum() / total_num
-    cell_set['err1.0'].value = f'{err10_num / total_num * 100.0:.2f}'
-    cell_set['err2.0'].value = f'{err20_num / total_num * 100.0:.2f}'
-    cell_set['err5.0'].value = f'{err50_num / total_num * 100.0:.2f}'
-    cell_set['avg'].value = f'{avg:.3f}'
+    cell_set[0].value = f'{err10_num / total_num * 100.0:.2f}'
+    cell_set[1].value = f'{err20_num / total_num * 100.0:.2f}'
+    cell_set[2].value = f'{err50_num / total_num * 100.0:.2f}'
+    cell_set[3].value = f'{avg:.3f}'
 
 
 def draw_depth_viz(depth):
@@ -53,109 +53,129 @@ def draw_diff_viz(depth_gt, depth_map, mask):
     return step_vis
 
 
-def main():
-    flag_reset = False
-    main_folder = Path('C:/SLDataSet/20221102real/CVPR2023')
-    workbook = openpyxl.load_workbook(str(main_folder / 'CVPR2023Result.xlsx'))
-    sheet_names = workbook.get_sheet_names()
+def process_scene(worksheet, params):
+    data_path = Path(worksheet['B1'].value)
+    res_path = Path(worksheet['B3'].value)
+    depth_scale = 10.0 / worksheet['K1'].value
 
-    pat_name_list = [x[0].value for x in workbook['err1.0']['B3':'B14']]
+    # Get methods set
+    all_value = [worksheet.cell(row=4, column=i + 1).value for i in range(worksheet.max_column)]
+    methods = [x for x in all_value if x is not None]
 
-    # Main experiments
-    for scene_num in range(5):
-        scene_folder = main_folder / f'scene{scene_num:02}'
-        if not scene_folder.exists():
-            continue
-        depth_gt = plb.imload(scene_folder / 'depth_map.png', scale=10.0)
-        mask_occ = plb.imload(scene_folder / 'mask_occ.png')
-        mask_occ[mask_occ > 0.99] = 1.0
-        mask_occ[mask_occ < 1.0] = 0.0
+    # Get experiments
+    all_value = [worksheet.cell(row=i + 1, column=1).value for i in range(5, worksheet.max_row)]
+    exps = [x for x in all_value if x is not None]
 
-        for col_i, exp_name in enumerate(['GrayCode', 'Vanilla', 'Ours']):
-            for row_i, pat_name in enumerate(pat_name_list):
-                depth_exp_path = scene_folder / exp_name / f'{pat_name}.png'
-                if not depth_exp_path.exists():
-                    continue
-                # Check if cell is empty
-                row_idx, col_idx = row_i + 3, scene_num * 3 + col_i + 3
-                cell_set = {x: workbook[x].cell(row_idx, col_idx) for x in sheet_names}
-                flag_any_empty = flag_reset
-                for _, cell in cell_set.items():
-                    if cell.value is None:
-                        flag_any_empty = True
+    # Load GT
+    depth_gt = plb.imload(data_path / 'depth_map.png', scale=10.0)
+    mask_gt = plb.imload(data_path / 'mask' / 'mask_occ.png')
 
-                if flag_any_empty:
-                    depth_map = plb.imload(depth_exp_path, scale=10.0)
-                    evaluate(depth_gt, depth_map, mask_occ, cell_set)
-                    err_viz = draw_diff_viz(depth_gt, depth_map, mask_occ)
-                    plb.imsave(scene_folder / exp_name / f'{pat_name}_diff.png', err_viz)
+    # Evaluate
+    for met_i, method in enumerate(methods):
+        for exp_i, exp in enumerate(exps):
+            # Get cells
+            # Start from B6
+            row_i, col_i = exp_i + 6, met_i * 4 + 2
+            cell_set = [worksheet.cell(row=row_i, column=col_i + x) for x in range(4)]
+            flag_all_filled = False
+            for cell in cell_set:
+                flag_all_filled = flag_all_filled and cell.value is not None
 
-        # Ablation Study
-        if scene_num == 0:
-            exp_names = [x.value for x in workbook['err1.0']['C19':'F19'][0]]
-            for col_i, exp_name in enumerate(exp_names):
-                for row_i, pat_name in enumerate(pat_name_list):
-                    depth_exp_path = scene_folder / exp_name / f'{pat_name}.png'
-                    if not depth_exp_path.exists():
+            if params['clear'] and not flag_all_filled:
+                for cell in cell_set:
+                    cell.value = None
+
+            # Check files
+            depth_target_path = res_path / method / f'{exp}.png'
+            if depth_target_path.exists():
+                depth_target = plb.imload(depth_target_path, scale=10.0)
+
+                if not params['recal']:
+                    if flag_all_empty:
                         continue
-                    # Check if cell is empty
-                    row_idx, col_idx = row_i + 20, scene_num + col_i + 3
-                    cell_set = {x: workbook[x].cell(row_idx, col_idx) for x in sheet_names}
-                    flag_any_empty = flag_reset
-                    for _, cell in cell_set.items():
-                        if cell.value is None:
-                            flag_any_empty = True
 
-                    if flag_any_empty:
-                        depth_map = plb.imload(depth_exp_path, scale=10.0)
-                        evaluate(depth_gt, depth_map, mask_occ, cell_set)
-                        err_viz = draw_diff_viz(depth_gt, depth_map, mask_occ)
-                        plb.imsave(scene_folder / exp_name / f'{pat_name}_diff.png', err_viz)
-
-    workbook.save(str(main_folder / 'CVPR2023Result.xlsx'))
-
-
-def test():
-    depth_map = plb.imload('pat5m10.png', scale=10.0)
-    mask_occ = plb.imload(r'C:\SLDataSet\20220907real\mask\mask_occ.png')
-
-    config = ConfigParser()
-    train_dir = Path('C:/SLDataSet/20220907real')
-    config.read(str(train_dir / 'config.ini'), encoding='utf-8')
-
-    pat_idx_set = [0, 1, 2, 3, 4]
-    ref_img_set = [41, 40]
-    my_device = torch.device('cpu')
-    pat_dataset = MultiPatDataset(
-        scene_folder=train_dir,
-        pat_idx_set=pat_idx_set,
-        ref_img_set=ref_img_set,
-        sample_num=50,
-        calib_para=config['Calibration'],
-        device=my_device,
-        rad=2
-    )
-
-    # warp_layer = WarpFromXyz(
-    #     calib_para=config['Calibration'],
-    #     pat_mat=self.pat_dataset.pat_set,
-    #     bound=self.bound,
-    #     device=self.device
-    # )
-    warp_layer = WarpFromDepth(
-        calib_para=config['Calibration'],
-        device=my_device
-    )
-
-    imgs = warp_layer(
-        depth_mat=depth_map.unsqueeze(0),
-        src_mat=pat_dataset.pat_set.unsqueeze(0),
-    )
-
-    plb.imviz_loop(imgs, 'imgs', 10)
+                evaluate(depth_gt * depth_scale, depth_target * depth_scale, mask_gt, cell_set)
+            else:
+                depth_target_path.parent.mkdir(parents=True, exist_ok=True)
 
     pass
 
 
+def main():
+    # Parameters
+    params = {
+        'recal': True,
+        'clear': True,
+        'workbook': 'C:/Users/qiao/Desktop/CVPR2023_Sub/Result.xlsx'
+    }
+    target_sheet_names = None
+
+    # Load workbook and process sheets
+    workbook = openpyxl.load_workbook(str(params['workbook']))
+    if target_sheet_names is None:
+        target_sheet_names = workbook.get_sheet_names()
+    for scene_name in target_sheet_names:
+        process_scene(workbook[scene_name], params)
+
+    workbook.save(str(params['workbook']))
+
+    # pat_name_list = [x[0].value for x in workbook['err1.0']['B3':'B14']]
+    # square_size = float(workbook['err1.0']['R2'].value)
+    # scale = 10.0 / square_size
+    #
+    # # Main experiments
+    # for scene_num in range(5):
+    #     scene_folder = main_folder / f'scene{scene_num:02}'
+    #     if not scene_folder.exists():
+    #         continue
+    #     depth_gt = plb.imload(scene_folder / 'depth_map.png', scale=10.0)
+    #     mask_occ = plb.imload(scene_folder / 'mask_occ.png')
+    #     mask_occ[mask_occ > 0.99] = 1.0
+    #     mask_occ[mask_occ < 1.0] = 0.0
+    #
+    #     for col_i, exp_name in enumerate(['GrayCode', 'Vanilla', 'Ours']):
+    #         for row_i, pat_name in enumerate(pat_name_list):
+    #             depth_exp_path = scene_folder / exp_name / f'{pat_name}.png'
+    #             if not depth_exp_path.exists():
+    #                 continue
+    #             # Check if cell is empty
+    #             row_idx, col_idx = row_i + 3, scene_num * 3 + col_i + 3
+    #             cell_set = {x: workbook[x].cell(row_idx, col_idx) for x in sheet_names}
+    #             flag_any_empty = flag_reset
+    #             for _, cell in cell_set.items():
+    #                 if cell.value is None:
+    #                     flag_any_empty = True
+    #
+    #             if flag_any_empty:
+    #                 depth_map = plb.imload(depth_exp_path, scale=10.0)
+    #                 evaluate(depth_gt * scale, depth_map * scale, mask_occ, cell_set)
+    #                 err_viz = draw_diff_viz(depth_gt * scale, depth_map * scale, mask_occ)
+    #                 plb.imsave(scene_folder / exp_name / f'{pat_name}_diff.png', err_viz)
+    #
+    #     # Ablation Study
+    #     if scene_num == 0:
+    #         exp_names = [x.value for x in workbook['err1.0']['C19':'F19'][0]]
+    #         for col_i, exp_name in enumerate(exp_names):
+    #             for row_i, pat_name in enumerate(pat_name_list):
+    #                 depth_exp_path = scene_folder / exp_name / f'{pat_name}.png'
+    #                 if not depth_exp_path.exists():
+    #                     continue
+    #                 # Check if cell is empty
+    #                 row_idx, col_idx = row_i + 20, scene_num + col_i + 3
+    #                 cell_set = {x: workbook[x].cell(row_idx, col_idx) for x in sheet_names}
+    #                 flag_any_empty = flag_reset
+    #                 for _, cell in cell_set.items():
+    #                     if cell.value is None:
+    #                         flag_any_empty = True
+    #
+    #                 if flag_any_empty:
+    #                     depth_map = plb.imload(depth_exp_path, scale=10.0)
+    #                     evaluate(depth_gt * scale, depth_map * scale, mask_occ, cell_set)
+    #                     err_viz = draw_diff_viz(depth_gt * scale, depth_map * scale, mask_occ)
+    #                     plb.imsave(scene_folder / exp_name / f'{pat_name}_diff.png', err_viz)
+    #
+    # workbook.save(str(main_folder / 'CVPR2023Result.xlsx'))
+
+
 if __name__ == '__main__':
-    test()
+    main()

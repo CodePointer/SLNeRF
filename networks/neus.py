@@ -912,7 +912,7 @@ class NeuSLRenderer:
             'inside_sphere': ret_fine['inside_sphere']
         }
 
-    def render_density(self, rays_d, reflect, alpha):
+    def render_density(self, rays_d, reflect, alpha=None):
         batch_size = len(rays_d)
         z_vals = torch.linspace(0.0, 1.0, self.n_samples, device=rays_d.device)
         near, far = self.bound[0, 2], self.bound[1, 2]
@@ -931,18 +931,19 @@ class NeuSLRenderer:
                 sdf, _ = self.sdf_network.sdf(pts_n.reshape(-1, 3))
                 sdf = sdf.reshape(batch_size, self.n_samples)
 
-                new_z_vals = self.up_sample_uni(z_vals, sdf, self.n_importance, alpha)
-                z_vals, sdf = self.cat_z_vals(rays_d, z_vals, new_z_vals, sdf, last=True)
-
-                # for i in range(self.up_sample_steps):
-                #     new_z_vals = self.up_sample_density(z_vals,
-                #                                         sdf,
-                #                                         self.n_importance // self.up_sample_steps)
-                #     z_vals, sdf = self.cat_z_vals(rays_d,
-                #                                   z_vals,
-                #                                   new_z_vals,
-                #                                   sdf,
-                #                                   last=(i + 1 == self.up_sample_steps))
+                if alpha is not None:
+                    new_z_vals = self.up_sample_uni(z_vals, sdf, self.n_importance, alpha)
+                    z_vals, sdf = self.cat_z_vals(rays_d, z_vals, new_z_vals, sdf, last=True)
+                else:  # Without sampling strategy
+                    for i in range(self.up_sample_steps):
+                        new_z_vals = self.up_sample_density(z_vals,
+                                                            sdf,
+                                                            self.n_importance // self.up_sample_steps)
+                        z_vals, sdf = self.cat_z_vals(rays_d,
+                                                      z_vals,
+                                                      new_z_vals,
+                                                      sdf,
+                                                      last=(i + 1 == self.up_sample_steps))
 
         # Render core
         batch_size, n_samples = z_vals.shape  # [N, C]
@@ -954,15 +955,8 @@ class NeuSLRenderer:
         density = density.reshape(z_vals.shape)
 
         #
-        # # Directly Compute pts
+        # Compute colors
         #
-        # weights = torch.nn.functional.softmax(density, dim=1)  # [n_rays, n_samples]
-        # z_val = (z_vals * weights).sum(dim=1).reshape(-1, 1)  # [n_rays, 1]
-        # pt = rays_d[:, None, :] * z_val[..., :, None]  # [n_rays, 1, 3]
-        # pt_n = self.pts_normalize(pt.reshape(-1, 3))
-        # sampled_color = self.color_network(pt_n, None, reflect=reflect)
-        # color = sampled_color
-
         projected_color = self.color_network(pts_n).reshape(batch_size, n_samples, -1)
         sampled_color = reflect[:, None, :1] * projected_color + reflect[:, None, 1:]
         weights = self.density2weights(z_vals=z_vals, density=density)
@@ -973,9 +967,6 @@ class NeuSLRenderer:
         color_1pt = reflect[:, :1] * self.color_network(self.pts_normalize(pts_sum)) + reflect[:, 1:]
         depth_val = pts_sum[:, -1:]
 
-        # Reflectance field
-        # brdf_val = (reflectance * weights[:, :, None]).sum(dim=1)
-
         return {
             'pts': pts,
             'pt_color': sampled_color,
@@ -984,8 +975,6 @@ class NeuSLRenderer:
             'depth': depth_val,
             'density': density,
             'z_vals': z_vals,
-            # 'reflectance': brdf_val,
-            # 'z_val': z_val,
             'weights': weights,
         }
 

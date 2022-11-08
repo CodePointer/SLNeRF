@@ -29,11 +29,10 @@ class ExpXyz2SdfWorker(Worker):
         super().__init__(args)
 
         # init_dataset()
+        self.focus_len = None
         self.pat_dataset = None
-        self.sample_num = 512
+        self.sample_num = self.args.batch_num
         self.bound = None
-        self.center_pt = None
-        self.scale = None
         self.warp_layer = None
 
         # init_networks()
@@ -41,7 +40,6 @@ class ExpXyz2SdfWorker(Worker):
 
         # init_losses()
         self.super_loss = None
-        self.igr_weight = 0.1
 
         self.anneal_ratio = 1.0
         self.anneal_end = 50000
@@ -56,36 +54,28 @@ class ExpXyz2SdfWorker(Worker):
         config = ConfigParser()
         config.read(str(self.train_dir / 'config.ini'), encoding='utf-8')
 
+        pat_idx_set = [int(x.strip()) for x in self.args.pat_set.split(',')]
+        ref_img_set = [int(x.strip()) for x in self.args.reflect_set.split(',')]
+        self.focus_len = plb.str2array(config['Calibration']['img_intrin'], np.float32)[0]
         self.pat_dataset = MultiPatDataset(
             scene_folder=self.train_dir,
-            pat_idx_set=[0, 1, 2, 3, 4, 5, 6, 7],
+            pat_idx_set=pat_idx_set,
+            ref_img_set=ref_img_set,
             sample_num=self.sample_num,
             calib_para=config['Calibration'],
             device=self.device
         )
-        self.train_dataset = None
+        self.train_dataset = self.pat_dataset
+
         self.test_dataset = []
-        self.res_writers = []
-
-        if self.args.exp_type == 'train':
-            self.save_flag = False
-            self.train_dataset = self.pat_dataset
-        elif self.args.exp_type == 'eval':  # Without BP: TIDE
-            self.save_flag = False
+        if self.args.exp_type == 'eval':
             self.test_dataset.append(self.pat_dataset)
+
+        self.res_writers = []
+        if self.args.save_stone > 0:
             self.res_writers.append(self.create_res_writers())
-        else:
-            raise NotImplementedError(f'Wrong exp_type: {self.args.exp_type}')
 
-        # Init warp_layer
-        self.bound, self.center_pt, self.scale = self.pat_dataset.get_bound()
-        self.warp_layer = WarpFromXyz(
-            calib_para=config['Calibration'],
-            pat_mat=self.pat_dataset.pat_set,
-            bound=self.bound,
-            device=self.device
-        )
-
+        self.bound = self.pat_dataset.get_bound()
         self.logging(f'--train_dir: {self.train_dir}')
 
     def init_networks(self):
@@ -100,7 +90,7 @@ class ExpXyz2SdfWorker(Worker):
             d_hidden=256,
             n_layers=8,
             skip_in=[4],
-            multires=6,
+            multires=self.args.multires,
             bias=0.5,
             scale=1.0,
             geometric_init=True,
@@ -108,6 +98,14 @@ class ExpXyz2SdfWorker(Worker):
         )
         self.networks['SingleVariance'] = SingleVarianceNetwork(
             init_val=0.3
+        )
+        config = ConfigParser()
+        config.read(str(self.train_dir / 'config.ini'), encoding='utf-8')
+        self.warp_layer = WarpFromXyz(
+            calib_para=config['Calibration'],
+            pat_mat=self.pat_dataset.pat_set,
+            bound=self.bound,
+            device=self.device
         )
         self.renderer = NeuSLRenderer(
             sdf_network=self.networks['SDFNetwork'],
@@ -141,7 +139,6 @@ class ExpXyz2SdfWorker(Worker):
         """
         for key in data:
             data[key] = data[key][0]
-
         return data
 
     def get_cos_anneal_ratio(self):
@@ -182,12 +179,6 @@ class ExpXyz2SdfWorker(Worker):
         return total_loss
 
     def callback_after_train(self, epoch):
-        # save_flag
-        if self.args.save_stone > 0 and (epoch + 1) % self.args.save_stone == 0:
-            self.save_flag = True
-        else:
-            self.save_flag = False
-
         # anneal_ratio
         self.anneal_ratio = np.min([1.0, epoch / self.anneal_end])
 
@@ -237,7 +228,88 @@ class ExpXyz2SdfWorker(Worker):
             if self.history_best[0] is None or self.history_best[0] > total_loss:
                 self.history_best = [total_loss, True]
 
+        # Save
+        if self.args.save_stone > 0 and epoch % self.args.save_stone == 0:
+            res = self.visualize_output(resolution_level=1, require_item=[
+                'img_list', 'wrp_viz', 'depth_viz', 'depth_map', 'point_cloud'
+            ])  # TODO: 可视化所有的query部分，用于绘制结果图。
+            save_folder = self.res_dir / 'output' / f'e_{epoch:05}'
+            save_folder.mkdir(parents=True, exist_ok=True)
+            plb.imsave(save_folder / f'wrp_viz.png', res['wrp_viz'])
+            plb.imsave(save_folder / f'{self.args.run_tag}_viz.png', res['depth_viz'])
+            plb.imsave(save_folder / f'{self.args.run_tag}.png', res['depth_map'], scale=10.0, img_type=np.uint16)
+            np.savetxt(str(save_folder / f'{self.args.run_tag}.asc'), res['point_cloud'],
+                       fmt='%.2f', delimiter=',', newline='\n', encoding='utf-8')
+            img_folder = save_folder / 'img'
+            for i, img in enumerate(res['img_list']):
+                plb.imsave(img_folder / f'img_{i}.png', img, mkdir=True)
+
         self.loss_writer.flush()
+
+    def visualize_output(self, resolution_level, require_item=None):
+        if require_item is None:
+            require_item = [
+                'wrp_viz',
+                'mesh',
+            ]
+
+        pvf = plb.VisualFactory
+        def require_contain(*keys):
+            flag = False
+            for key in keys:
+                flag = flag or (key in require_item)
+            return flag
+
+        # TODO: Write out the visualization part for SDF version.
+        #       Please refer to https://github.com/Totoro97/NeuS/blob/main/exp_runner.py.
+        #       validate_image & validate_sdf would help.
+        #       Maybe just extract the sdf is enough even we haven't finish the training.
+        res = {}
+        if require_contain('wrp_viz'):
+            # image
+            rays_o, rays_d, img_size, mask_val, _ = self.pat_dataset.get_uniform_ray(resolution_level=resolution_level)
+            rays_o_set = rays_o.split(self.sample_num)  # TODO: Maybe we have to change this uniform ray sampling.
+            rays_d_set = rays_d.split(self.sample_num)
+
+            out_rgb_fine = []
+            for rays_o, rays_d in tqdm(zip(rays_o_set, rays_d_set)):
+                render_out = self.renderer.render(rays_o, rays_d, self.bound,
+                                                  cos_anneal_ratio=self.anneal_ratio)
+                color_fine = render_out['color_fine']  # [N, C]
+                out_rgb_fine.append(color_fine.detach().cpu())
+                del render_out
+
+            img_hei, img_wid = img_size
+            img_set = torch.cat(out_rgb_fine, dim=0).permute(1, 0)
+            channel = img_set.shape[0]
+            img_render_list = []
+            for c in range(channel):
+                img_fine = img_set[c].reshape(img_wid, img_hei).permute(1, 0)
+                img_viz = pvf.img_visual(img_fine)
+                img_render_list.append(img_viz)
+            img_input = self.pat_dataset.img_set.unsqueeze(0).detach().cpu()
+            img_input_re = torch.nn.functional.interpolate(img_input, scale_factor=1 / resolution_level).squeeze()
+            for c in range(channel):
+                img_gt = img_input_re[c]
+                img_viz = pvf.img_visual(img_gt)
+                img_render_list.append(img_viz)
+            res['wrp_viz'] = pvf.img_concat(img_render_list, 2, channel, transpose=False)
+
+        if require_contain('mesh'):
+            # bound_min = torch.tensor(self.dataset.object_bbox_min, dtype=torch.float32)
+            # bound_max = torch.tensor(self.dataset.object_bbox_max, dtype=torch.float32)
+            #
+            # vertices, triangles = \
+            #     self.renderer.extract_geometry(bound_min, bound_max, resolution=resolution, threshold=threshold)
+            # os.makedirs(os.path.join(self.base_exp_dir, 'meshes'), exist_ok=True)
+            #
+            # mesh = trimesh.Trimesh(vertices, triangles)
+            # mesh.export(os.path.join(self.base_exp_dir, 'meshes', '{:0>8d}.ply'.format(self.iter_step)))
+            # TODO. 这一部分是从代码里面直接粘过来的。存在各种问题。
+            pass
+
+
+        return res
 
     def callback_img_visual(self, data, net_out, tag, step):
         """
