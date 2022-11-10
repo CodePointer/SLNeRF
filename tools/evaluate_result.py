@@ -90,9 +90,8 @@ def process_scene(worksheet, params):
             if depth_target_path.exists():
                 depth_target = plb.imload(depth_target_path, scale=10.0)
 
-                if not params['recal']:
-                    if flag_all_empty:
-                        continue
+                if not params['recal'] and flag_all_filled:
+                    continue
 
                 evaluate(depth_gt * depth_scale, depth_target * depth_scale, mask_gt, cell_set)
             else:
@@ -104,7 +103,7 @@ def process_scene(worksheet, params):
 def main():
     # Parameters
     params = {
-        'recal': True,
+        'recal': False,
         'clear': True,
         'workbook': 'C:/Users/qiao/Desktop/CVPR2023_Sub/Result.xlsx'
     }

@@ -154,6 +154,7 @@ class ExpXyz2SdfWorker(Worker):
             rays_o=data['rays_o'],
             rays_d=data['rays_v'],
             bound=self.bound,
+            reflect=data['reflect'],
             background_rgb=None,
             cos_anneal_ratio=self.anneal_ratio
         )
@@ -231,18 +232,14 @@ class ExpXyz2SdfWorker(Worker):
         # Save
         if self.args.save_stone > 0 and epoch % self.args.save_stone == 0:
             res = self.visualize_output(resolution_level=1, require_item=[
-                'img_list', 'wrp_viz', 'depth_viz', 'depth_map', 'point_cloud'
+                'wrp_viz', 'mesh'
             ])  # TODO: 可视化所有的query部分，用于绘制结果图。
             save_folder = self.res_dir / 'output' / f'e_{epoch:05}'
             save_folder.mkdir(parents=True, exist_ok=True)
             plb.imsave(save_folder / f'wrp_viz.png', res['wrp_viz'])
-            plb.imsave(save_folder / f'{self.args.run_tag}_viz.png', res['depth_viz'])
-            plb.imsave(save_folder / f'{self.args.run_tag}.png', res['depth_map'], scale=10.0, img_type=np.uint16)
-            np.savetxt(str(save_folder / f'{self.args.run_tag}.asc'), res['point_cloud'],
-                       fmt='%.2f', delimiter=',', newline='\n', encoding='utf-8')
-            img_folder = save_folder / 'img'
-            for i, img in enumerate(res['img_list']):
-                plb.imsave(img_folder / f'img_{i}.png', img, mkdir=True)
+            vertices, triangles = res['mesh']
+            mesh = trimesh.Trimesh(vertices, triangles)
+            mesh.export(str(save_folder / f'mesh.ply'))
 
         self.loss_writer.flush()
 
@@ -260,54 +257,61 @@ class ExpXyz2SdfWorker(Worker):
                 flag = flag or (key in require_item)
             return flag
 
-        # TODO: Write out the visualization part for SDF version.
-        #       Please refer to https://github.com/Totoro97/NeuS/blob/main/exp_runner.py.
-        #       validate_image & validate_sdf would help.
-        #       Maybe just extract the sdf is enough even we haven't finish the training.
         res = {}
         if require_contain('wrp_viz'):
             # image
-            rays_o, rays_d, img_size, mask_val, _ = self.pat_dataset.get_uniform_ray(resolution_level=resolution_level)
-            rays_o_set = rays_o.split(self.sample_num)  # TODO: Maybe we have to change this uniform ray sampling.
-            rays_d_set = rays_d.split(self.sample_num)
+            rays_o, rays_d, img_size, mask_val, reflect = self.pat_dataset.get_uniform_ray(
+                resolution_level=resolution_level
+            )
+
+            img_hei, img_wid = img_size
+            total_ray = rays_o.shape[0]
+            idx = torch.arange(0, total_ray, dtype=torch.long)
+            idx = idx[mask_val > 0.0]
+            rays_o = rays_o[mask_val > 0.0]
+            rays_d = rays_d[mask_val > 0.0]
+            reflect = reflect[mask_val > 0.0]
+
+            pch_num = self.pat_dataset.get_pch_len() ** 2
+            rays_o_set = rays_o.split(self.sample_num * pch_num)
+            rays_d_set = rays_d.split(self.sample_num * pch_num)
+            reflect_set = reflect.split(self.sample_num * pch_num)
 
             out_rgb_fine = []
-            for rays_o, rays_d in tqdm(zip(rays_o_set, rays_d_set)):
-                render_out = self.renderer.render(rays_o, rays_d, self.bound,
+            for rays_o, rays_d, reflect in zip(rays_o_set, rays_d_set, reflect_set):
+                render_out = self.renderer.render(rays_o, rays_d, self.bound, reflect,
                                                   cos_anneal_ratio=self.anneal_ratio)
                 color_fine = render_out['color_fine']  # [N, C]
                 out_rgb_fine.append(color_fine.detach().cpu())
                 del render_out
 
-            img_hei, img_wid = img_size
             img_set = torch.cat(out_rgb_fine, dim=0).permute(1, 0)
             channel = img_set.shape[0]
+            img_all = torch.zeros([channel, total_ray], dtype=img_set.dtype).to(img_set.device)
+            img_all.scatter_(1, idx.reshape(1, -1).repeat(channel, 1), img_set)
             img_render_list = []
             for c in range(channel):
-                img_fine = img_set[c].reshape(img_wid, img_hei).permute(1, 0)
+                img_fine = img_all[c].reshape(img_wid, img_hei).permute(1, 0)
                 img_viz = pvf.img_visual(img_fine)
                 img_render_list.append(img_viz)
+
+            img_gt_list = []
             img_input = self.pat_dataset.img_set.unsqueeze(0).detach().cpu()
             img_input_re = torch.nn.functional.interpolate(img_input, scale_factor=1 / resolution_level).squeeze()
             for c in range(channel):
                 img_gt = img_input_re[c]
                 img_viz = pvf.img_visual(img_gt)
                 img_render_list.append(img_viz)
-            res['wrp_viz'] = pvf.img_concat(img_render_list, 2, channel, transpose=False)
+
+            wrp_viz = pvf.img_concat(img_render_list + img_gt_list, 2, channel, transpose=False)
+            res['wrp_viz'] = wrp_viz
 
         if require_contain('mesh'):
-            # bound_min = torch.tensor(self.dataset.object_bbox_min, dtype=torch.float32)
-            # bound_max = torch.tensor(self.dataset.object_bbox_max, dtype=torch.float32)
-            #
-            # vertices, triangles = \
-            #     self.renderer.extract_geometry(bound_min, bound_max, resolution=resolution, threshold=threshold)
-            # os.makedirs(os.path.join(self.base_exp_dir, 'meshes'), exist_ok=True)
-            #
-            # mesh = trimesh.Trimesh(vertices, triangles)
-            # mesh.export(os.path.join(self.base_exp_dir, 'meshes', '{:0>8d}.ply'.format(self.iter_step)))
-            # TODO. 这一部分是从代码里面直接粘过来的。存在各种问题。
-            pass
-
+            vertices, triangles = self.renderer.extract_geometry(
+                vol_bound=self.bound,
+                resolution=64,  # 256 // resolution_level
+            )
+            res['mesh'] = (vertices, triangles)
 
         return res
 
@@ -318,99 +322,10 @@ class ExpXyz2SdfWorker(Worker):
             For image visualization, some custom code is needed.
             Please write image to loss_writer and call flush().
         """
-        pvf = plb.VisualFactory
-        resolution_level = 4
-
-        # image
-        rays_o, rays_d, img_size = self.pat_dataset.get_uniform_ray(resolution_level=resolution_level)
-        rays_o_set = rays_o.split(self.sample_num)
-        rays_d_set = rays_d.split(self.sample_num)
-        out_rgb_fine = []
-        out_depth = []
-        out_pts = []
-        out_min_pts = []
-        for rays_o, rays_d in tqdm(zip(rays_o_set, rays_d_set)):
-            render_out = self.renderer.render(rays_o, rays_d, self.bound,
-                                              cos_anneal_ratio=self.anneal_ratio)
-            color_fine = render_out['color_fine']  # [N, C]
-            out_rgb_fine.append(color_fine.detach().cpu())
-            weights = render_out['weights']
-            mid_z_vals = render_out['mid_z_vals']
-            max_idx = torch.argmax(weights, dim=1)  # [N]
-            mid_z = mid_z_vals[torch.arange(max_idx.shape[0]), max_idx]
-            out_depth.append(mid_z.detach().cpu())
-            pts = render_out['pts'].detach().cpu()
-            out_pts.append(pts.reshape(-1, 3))
-            min_pts = pts[torch.arange(max_idx.shape[0]), max_idx]
-            out_min_pts.append(min_pts)
-        img_hei, img_wid = img_size
-        img_set = torch.cat(out_rgb_fine, dim=0).permute(1, 0)
-        channel = img_set.shape[0]
-        img_render_list = []
-        for c in range(channel):
-            img_fine = img_set[c].reshape(img_wid, img_hei).permute(1, 0)
-            img_viz = pvf.img_visual(img_fine)
-            img_render_list.append(img_viz)
-        depth_set = torch.cat(out_depth, dim=0)
-        depth_mat = depth_set.reshape(img_wid, img_hei).permute(1, 0)
-        plb.imviz(img_render_list[-1], 'img', 10)
-        plb.imviz(depth_mat, 'depth', 10, normalize=[300, 900])
-
-        pts_set = torch.cat(out_pts, dim=0).numpy()
-        np.savetxt(str(self.res_dir / 'depth_query.asc'), pts_set,
-                   fmt='%.2f', delimiter=', ', newline='\n',
-                   encoding='utf-8')
-        min_pts_set = torch.cat(out_min_pts, dim=0).numpy()
-        np.savetxt(str(self.res_dir / 'depth_map.asc'), min_pts_set,
-                   fmt='%.2f', delimiter=', ', newline='\n',
-                   encoding='utf-8')
-        # with open(str(self.res_dir / 'depth_query.asc'), 'w+', encoding='utf-8') as file:
-        #     for pts in pts_set:
-        #         file.write(f'{pts[0]:.02f}, {pts[1]:.02f}, {pts[2]:.02f}\n')
-        print('depth_query finished.')
-
-        # channel = 8
-        # img_hei, img_wid = 240, 320
-        img_input = self.pat_dataset.img_set.unsqueeze(0).detach().cpu()
-        img_input_re = torch.nn.functional.interpolate(img_input, scale_factor=1 / resolution_level).squeeze()
-        for c in range(channel):
-            img_gt = img_input_re[c]
-            img_viz = pvf.img_visual(img_gt)
-            img_render_list.append(img_viz)
-        plb.imviz(img_render_list[-1], 'img_gt', 10)
-
-        wrp_viz = pvf.img_concat(img_render_list, 2, channel, transpose=False)
-        self.loss_writer.add_image(f'{tag}/img_render', wrp_viz, step)
-
-        # Mesh
-        # mesh_bound = np.stack([np.min(pts_set, axis=0), np.max(pts_set, axis=0)])
-        # vertices, triangles, pts_set_sdf, pts_select = self.renderer.extract_geometry(
-        #     torch.from_numpy(mesh_bound).cuda(),
-        #     resolution=128,
-        #     threshold=0.0
-        # )
-        rays_o, rays_d, img_size = self.pat_dataset.get_uniform_ray(resolution_level=resolution_level)
-        vertices, triangles, pts_set_sdf, pts_select = self.renderer.extract_proj_geometry(
-            rays_d,
-            img_size,
-            self.bound,
-            z_resolution=128,
-            threshold=0.0
-        )
-
+        res = self.visualize_output(resolution_level=4, require_item=['wrp_viz', 'mesh'])
+        self.loss_writer.add_image(f'{tag}/img_render', res['wrp_viz'], step)
+        vertices, triangles = res['mesh']
         vertices = torch.from_numpy(vertices.astype(np.float32)).unsqueeze(0)
         triangles = torch.from_numpy(triangles.astype(np.int32)).unsqueeze(0)
-        ver_color = self.warp_layer(vertices[0].cuda()).detach().cpu()
-        vertex_color = (ver_color[:, :1] * 255).numpy().astype(np.uint8).repeat(3, axis=1)
-        # face_color = np.zeros()
-        mesh = trimesh.Trimesh(vertices[0], triangles[0], vertex_colors=vertex_color)
-        mesh.export(str(self.res_dir / 'mesh.ply'))
         self.loss_writer.add_mesh(f'{tag}/mesh', vertices=vertices, faces=triangles, global_step=step)
-
-        np.savetxt(str(self.res_dir / 'sdf_query.asc'), pts_set_sdf.numpy(),
-                   fmt='%.2f', delimiter=', ', newline='\n', encoding='utf-8')
-        np.savetxt(str(self.res_dir / 'sdf_select.asc'), pts_select.numpy(),
-                   fmt='%.2f', delimiter=', ', newline='\n', encoding='utf-8')
-        print('sdf_query finished.')
-
         self.loss_writer.flush()
