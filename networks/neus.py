@@ -649,6 +649,7 @@ class NeuSLRenderer:
                     rays_o,
                     rays_d,
                     z_vals,
+                    reflect,
                     sample_dist,
                     sdf_network,
                     deviation_network,
@@ -680,7 +681,9 @@ class NeuSLRenderer:
         # feature_vector = sdf_nn_output[:, 1:]
 
         gradients = sdf_network.gradient(pts).squeeze()
-        sampled_color = color_network(pts).reshape(batch_size, n_samples, -1)
+        # sampled_color = color_network(pts).reshape(batch_size, n_samples, -1)
+        projected_color = color_network(pts).reshape(batch_size, n_samples, -1)
+        sampled_color = reflect[:, None, :1] * projected_color + reflect[:, None, 1:]
 
         inv_s = deviation_network(torch.zeros([1, 3]))[:, :1].clip(1e-6, 1e6)           # Single parameter
         inv_s = inv_s.expand(batch_size * n_samples, 1)
@@ -750,7 +753,7 @@ class NeuSLRenderer:
         pts_normalized = (pts - center_pt) / scale
         return pts_normalized
 
-    def render(self, rays_o, rays_d, bound, background_rgb=None, cos_anneal_ratio=0.0):
+    def render(self, rays_o, rays_d, bound, reflect, background_rgb=None, cos_anneal_ratio=0.0):
         batch_size = len(rays_o)
         sample_dist = 2.0 / self.n_samples   # Assuming the region of interest is a unit sphere
         z_vals = torch.linspace(0.0, 1.0, self.n_samples, device=rays_d.device)
@@ -817,6 +820,7 @@ class NeuSLRenderer:
         ret_fine = self.render_core(rays_o,
                                     rays_d,
                                     z_vals,
+                                    reflect,
                                     sample_dist,
                                     self.sdf_network,
                                     self.deviation_network,

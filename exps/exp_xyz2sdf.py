@@ -154,6 +154,7 @@ class ExpXyz2SdfWorker(Worker):
             rays_o=data['rays_o'],
             rays_d=data['rays_v'],
             bound=self.bound,
+            reflect=data['reflect'],
             background_rgb=None,
             cos_anneal_ratio=self.anneal_ratio
         )
@@ -278,7 +279,7 @@ class ExpXyz2SdfWorker(Worker):
 
             out_rgb_fine = []
             for rays_o, rays_d, reflect in zip(rays_o_set, rays_d_set, reflect_set):
-                render_out = self.renderer.render(rays_o, rays_d, self.bound,
+                render_out = self.renderer.render(rays_o, rays_d, self.bound, reflect,
                                                   cos_anneal_ratio=self.anneal_ratio)
                 color_fine = render_out['color_fine']  # [N, C]
                 out_rgb_fine.append(color_fine.detach().cpu())
@@ -308,7 +309,7 @@ class ExpXyz2SdfWorker(Worker):
         if require_contain('mesh'):
             vertices, triangles = self.renderer.extract_geometry(
                 vol_bound=self.bound,
-                resolution=256 // resolution_level
+                resolution=64,  # 256 // resolution_level
             )
             res['mesh'] = (vertices, triangles)
 
