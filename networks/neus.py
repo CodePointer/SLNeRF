@@ -669,8 +669,6 @@ class NeuSLRenderer:
         pts = rays_o[:, None, :] + rays_d[:, None, :] * mid_z_vals[..., :, None]  # n_rays, n_samples, 3
         dirs = rays_d[:, None, :].expand(pts.shape)
 
-        pts_bk = pts.detach().cpu().clone()
-
         pts = pts.reshape(-1, 3)
         pts = self.pts_normalize(pts)
         dirs = dirs.reshape(-1, 3)
@@ -733,7 +731,6 @@ class NeuSLRenderer:
         gradient_error = (relax_inside_sphere * gradient_error).sum() / (relax_inside_sphere.sum() + 1e-5)
 
         return {
-            'pts': pts_bk,
             'color': color,
             'sdf': sdf,
             'dists': dists,
@@ -838,7 +835,6 @@ class NeuSLRenderer:
         s_val = ret_fine['s_val'].reshape(batch_size, n_samples).mean(dim=-1, keepdim=True)
 
         return {
-            'pts': ret_fine['pts'],
             'color_fine': color_fine,
             's_val': s_val,
             'cdf_fine': ret_fine['cdf'],
