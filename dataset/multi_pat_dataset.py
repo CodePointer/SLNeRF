@@ -151,8 +151,8 @@ class MultiPatDataset(torch.utils.data.Dataset):
         selected_coord = self.valid_patch[:, :, :, selected_idx]  # [2, pch_len, pch_len, N]
         selected_mask = self.valid_mask[:, :, :, selected_idx]  # [1, pch_len, pch_len, N]
 
-        pixels_x = selected_coord[0].reshape(-1)
-        pixels_y = selected_coord[1].reshape(-1)
+        pixels_x = selected_coord[1].reshape(-1)
+        pixels_y = selected_coord[0].reshape(-1)
         color = self.img_set[:, pixels_y, pixels_x].permute(1, 0)  # [pch_len**2 * N, C]
         reflect = self.ref_set[:, pixels_y, pixels_x].permute(1, 0)  # [pch_len**2 * N, 2]
 
