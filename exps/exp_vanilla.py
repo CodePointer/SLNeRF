@@ -122,7 +122,7 @@ class ExpVanillaNeRF(Worker):
         """
         self.super_loss = SuperviseDistLoss(dist='l1')
         self.loss_funcs['color_l1'] = self.super_loss
-        self.loss_funcs['color_1pt_l1'] = self.super_loss
+        # self.loss_funcs['color_1pt_l1'] = self.super_loss
         self.logging(f'--loss types: {self.loss_funcs.keys()}')
         pass
 
