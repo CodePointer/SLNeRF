@@ -112,7 +112,7 @@ def decode(folder):
             40, 41
         coord: hei_bias = 32.0
     """
-    pat_num = len(list((folder / 'pat').glob('*.png')))
+    pat_num = len(list((folder / 'pat').glob('pat_*.png')))
     scene_num = len(list(folder.glob('scene_*')))
 
     # Load config if exist
@@ -183,9 +183,34 @@ def decode(folder):
             plb.imsave(scene_folder / 'depth' / 'depth_0.png', depth_map, scale=10.0, img_type=np.uint16, mkdir=True)
 
 
+def compute_disp2depth(folder):
+    scene_num = len(list(folder.glob('scene_*')))
+
+    # Load config if exist
+    config_file = folder / 'config.ini'
+    config = ConfigParser()
+    config.read(str(config_file), encoding='utf-8')
+    focal_len = float(config['Calibration']['focal_len'])
+    baseline = float(config['Calibration']['baseline'])
+
+    for scene_idx in range(scene_num):
+        scene_folder = folder / f'scene_{scene_idx:02}'
+        depth_file = scene_folder / 'depth' / 'depth_0.png'
+        mask_file = scene_folder / 'mask' / 'mask_occ.png'
+        disp_file = scene_folder / 'depth' / 'disp_0.png'
+        if mask_file.exists() and disp_file.exists():
+            mask = plb.imload(mask_file, flag_tensor=False)
+            disp = plb.imload(disp_file, scale=1e2, flag_tensor=False)
+            depth = focal_len * baseline / disp
+            depth[mask == 0.0] = 0.0
+            depth[disp == 0.0] = 0.0
+            plb.imsave(depth_file, depth, scale=10.0, img_type=np.uint16)
+
+
 def main():
-    folder = Path(r'C:\SLDataSet\20220907real')
-    decode(folder)
+    folder = Path(r'C:\SLDataSet\20221213real')
+    # decode(folder)
+    compute_disp2depth(folder)
 
 
 if __name__ == '__main__':
