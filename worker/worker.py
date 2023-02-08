@@ -30,12 +30,13 @@ class Worker:
         self.train_dir = None
         self.test_dir = None
         self.res_dir = None
-        self.res_writers = None
 
         self.loss_writer = None
         self.log_file = None
+
         self.train_dataset = None  # For training
         self.test_dataset = None  # For testing
+
         self.networks = OrderedDict()
         self.network_static_list = list()
         self.optimizer = None
@@ -43,7 +44,7 @@ class Worker:
         self.loss_funcs = OrderedDict()
         self.avg_meters = OrderedDict()
 
-        self.N = 1
+        self.N = self.args.batch_num
         self.device = args.device
         self.train_shuffle = True
         self.n_iter = None
@@ -51,7 +52,6 @@ class Worker:
 
         self.stopwatch = None
         self.status = "Unknown"
-        # self.save_flag = False
 
     def logging(self, outputs, tag='paras', step=None, log=True, save=True):
         # Only first gpu have logs
@@ -74,14 +74,6 @@ class Worker:
                 log_title = f'[{tag}-{step}]'
                 for output_str in outputs:
                     file.write(log_title + output_str + '\n')
-
-    def create_res_writers(self):
-        """For result output."""
-        out_dir = self.res_dir / 'output'
-        out_dir.mkdir(parents=True, exist_ok=True)
-        config = configparser.ConfigParser()
-        config['DEFAULT'] = {}
-        return out_dir, config
 
     def init_all(self):
         self.init_logger()
@@ -115,10 +107,9 @@ class Worker:
     def _net_parallel(self):
         for name in self.networks:
             self.networks[name] = self.networks[name].to(self.args.device)
-            if len(list(self.networks[name].parameters())) > 0:
-                self.networks[name] = torch.nn.parallel.DistributedDataParallel(
-                    self.networks[name], device_ids=[self.args.local_rank], find_unused_parameters=False
-                )
+            self.networks[name] = torch.nn.parallel.DistributedDataParallel(
+                self.networks[name], device_ids=[self.args.local_rank], find_unused_parameters=False
+            )
 
     def _net_load(self, epoch_num):
         if self.args.model_dir == '':
@@ -208,9 +199,7 @@ class Worker:
         # Set initial things
         epoch_start = self.args.epoch_start
         if self.args.exp_type == 'train':
-            epoch_end = self.args.epoch_end
-            if self.args.debug_mode:
-                epoch_end = epoch_start + 2
+            epoch_end = epoch_start + 2 if self.args.debug_mode else self.args.epoch_end
             self.n_iter = int(epoch_start * len(self.train_dataset) / self.N)
         elif self.args.exp_type in ['eval', 'online']:
             epoch_end = epoch_start + 1
@@ -231,7 +220,7 @@ class Worker:
 
         for epoch_num in range(epoch_start, epoch_end):
             if self.args.exp_type in ['train', 'online']:
-                lr = self.scheduler.get_last_lr()[0]
+                # lr = self.scheduler.get_last_lr()[0]
                 # self.logging(f'Start training epoch {epoch_num}: lr={lr} <{self.time_keeper}>', tag='epoch', step=epoch_num)
                 self.train_epoch(epoch=epoch_num)
                 self.scheduler.step()
@@ -263,14 +252,23 @@ class Worker:
         self.avg_meters[loss_name].update(loss, self.N)
         return loss if return_val_only else ret
 
-    def callback_after_train(self, epoch):
-        # raise NotImplementedError(':callback_after_train() is not implemented by base class.')
-        pass
-
-    def callback_after_test(self, epoch):
-        pass
+    def check_save_res(self, epoch):
+        """
+            Only check if epoch_num reached the save_stone.
+            Please inherit this function if you have other requirements.
+        """
+        if self.args.save_stone == 0:
+            return False
+        else:
+            return (epoch + 1) % self.args.save_stone == 0
+    
+    def callback_save_res(self, epoch, data, net_out, dataset):
+        raise NotImplementedError(':callback_save_res() is not implemented by base class.')
 
     def check_realtime_report(self, **kwargs):
+        if self.loss_writer is None:
+            return False
+
         if self.args.debug_mode:
             return True
 
@@ -298,7 +296,7 @@ class Worker:
                      tag=self.args.exp_type, step=self.n_iter, log=log_flag)
         self.loss_writer.flush()
 
-    def callback_epoch_report(self, epoch, tag, stopwatch, res_writer=None):
+    def callback_epoch_report(self, epoch, tag, stopwatch):
         total_loss = self.avg_meters['Total'].get_epoch()
         for name in self.avg_meters.keys():
             self.loss_writer.add_scalar(f'{tag}-epoch/{name}', self.avg_meters[name].get_epoch(), epoch)
@@ -311,19 +309,12 @@ class Worker:
             if self.history_best[0] is None or self.history_best[0] > total_loss:
                 self.history_best = [total_loss, True]
 
-        # Save config file
-        if res_writer is not None and len(res_writer) > 0:
-            out_dir, config = res_writer
-            config['DEFAULT']['log'] = f'{stopwatch}'
-            with open(str(out_dir / 'src_path.ini'), 'w') as file:
-                config.write(file)
-
         self.loss_writer.flush()
 
-    def callback_save_res(self, data, net_out, dataset, res_writer):
-        raise NotImplementedError(':callback_save_res() is not implemented by base class.')
-
     def check_img_visual(self, **kwargs):
+        if self.loss_writer is None:
+            return False
+
         if self.args.debug_mode:
             return True
 
@@ -336,15 +327,29 @@ class Worker:
                 return True
         else:
             raise NotImplementedError(f'Error status flag: {self.status}')
+        
         return False
 
     def callback_img_visual(self, data, net_out, tag, step):
         raise NotImplementedError(':callback_img_visual() is not implemented by base class.')
 
+    def callback_after_train(self, epoch):
+        # raise NotImplementedError(':callback_after_train() is not implemented by base class.')
+        pass
+
+    def callback_after_test(self, epoch):
+        pass
+
     def train_epoch(self, epoch):
         self.stopwatch = plb.StopWatch()
         self.status = 'Train'
 
+        if self.train_dataset is None:
+            return
+
+        #
+        # Set dataloader and networks
+        #
         train_sampler = None
         shuffle = self.train_shuffle
         if self.args.data_parallel:
@@ -358,6 +363,9 @@ class Worker:
             self.networks[name] = self.networks[name].to(self.device)
             self.networks[name].train()
 
+        #
+        # Main loop of epoch training
+        #
         self.stopwatch.start('total')
         for idx, data in enumerate(train_loader):
 
@@ -379,17 +387,19 @@ class Worker:
             with self.stopwatch.record('optimizer'):
                 self.optimizer.step()
 
-            # if self.save_flag and self.args.exp_type == 'online':
-            #     self.callback_save_res(data=data, net_out=output,
-            #                            dataset=self.train_dataset, res_writer=self.res_writers[0])
+            #
+            # Reporting part
+            #
+            if self.check_save_res(epoch):
+                self.callback_save_res(epoch=epoch, data=data, net_out=output, dataset=self.train_dataset)
 
             # Report in real-time
-            if self.check_realtime_report(epoch=epoch) and self.loss_writer is not None:
+            if self.check_realtime_report():
                 self.callback_realtime_report(batch_idx=idx, batch_total=len(train_loader), epoch=epoch,
                                               tag='train', step=self.n_iter)
 
             # Draw image
-            if self.check_img_visual(epoch=epoch) and self.loss_writer is not None:
+            if self.check_img_visual(idx=idx, data=data):
                 self.callback_img_visual(data=data, net_out=output, tag='train', step=self.n_iter)
 
             if self.args.debug_mode:
@@ -404,7 +414,10 @@ class Worker:
     def test_epoch(self, epoch):
         self.status = "Eval"
 
-        def apply_test(test_dataset, epoch, tag, res_writer):
+        def apply_test(test_dataset, epoch, tag):
+            if test_dataset is None:
+                return
+
             test_sampler = None
             test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1, shuffle=False,
                                                       num_workers=self.args.num_workers, drop_last=True,
@@ -424,8 +437,8 @@ class Worker:
                     with self.stopwatch.record('forward'):
                         net_out = self.net_forward(data=data)
 
-                    # if self.save_flag:
-                    #     self.callback_save_res(data=data, net_out=net_out, dataset=test_dataset, res_writer=res_writer)
+                    if self.check_save_res(epoch):
+                        self.callback_save_res(epoch=epoch, data=data, net_out=net_out, dataset=test_dataset)
 
                     # Draw image
                     if self.check_img_visual(idx=idx, epoch=epoch) and self.loss_writer is not None:
@@ -443,10 +456,10 @@ class Worker:
 
                 # Report
                 if self.loss_writer is not None:
-                    self.callback_epoch_report(epoch=epoch, tag=tag, stopwatch=self.stopwatch, res_writer=res_writer)
+                    self.callback_epoch_report(epoch=epoch, tag=tag, stopwatch=self.stopwatch)
 
         if not isinstance(self.test_dataset, list):
-            apply_test(self.test_dataset, epoch, 'eval', self.res_writers[0])
+            apply_test(self.test_dataset, epoch, 'eval')
         else:
             for i, test_dataset in enumerate(self.test_dataset):
-                apply_test(test_dataset, epoch, f'eval{i}', self.res_writers[i])
+                apply_test(test_dataset, epoch, f'eval{i}')

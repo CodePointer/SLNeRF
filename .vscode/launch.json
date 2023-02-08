@@ -12,7 +12,7 @@
             "console": "integratedTerminal",
             "args": [
                 "--config",
-                "${workspaceFolder}/params/xyz2density_train_lnx.ini",
+                "${workspaceFolder}/params/xyz2sdf_eval.ini",
             ],
             "env": {
                 "CUDA_VISIBLE_DEVICES": "0",

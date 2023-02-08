@@ -1,3 +1,8 @@
+echo "CUDA_VISIBLE_DEVICES: "${1}
+
+CUDA_VISIBLE_DEVICES=${1} python -m torch.distributed.launch --nproc_per_node=1 main.py \
+    --config ./params/xyz2sdf_train.ini
+
 # CUDA_VISIBLE_DEVICES=0,1 python -m torch.distributed.launch --nproc_per_node=2 main.py \
 #     --config ./params/xyz2density_train_lnx.ini \
 #     --pat_set 0,1,2,3,4,5,6 \
@@ -60,12 +65,12 @@
 
 
 # Not regular
-CUDA_VISIBLE_DEVICES=0,1 python -m torch.distributed.launch --nproc_per_node=2 main.py \
-    --config ./params/xyz2density_train_lnx.ini \
-    --pat_set 0,1,2,6 \
-    --train_dir /media/qiao/Videos/SLDataSet/20220907real \
-    --out_dir /media/qiao/Videos/SLDataSet/20220907real-outm6 \
-    --run_tag pat0126
+# CUDA_VISIBLE_DEVICES=0,1 python -m torch.distributed.launch --nproc_per_node=2 main.py \
+#     --config ./params/xyz2density_train_lnx.ini \
+#     --pat_set 0,1,2,6 \
+#     --train_dir /media/qiao/Videos/SLDataSet/20220907real \
+#     --out_dir /media/qiao/Videos/SLDataSet/20220907real-outm6 \
+#     --run_tag pat0126
 
 # CUDA_VISIBLE_DEVICES=0,1 python -m torch.distributed.launch --nproc_per_node=2 main.py \
 #     --config ./params/xyz2density_train_lnx.ini \
@@ -95,9 +100,9 @@ CUDA_VISIBLE_DEVICES=0,1 python -m torch.distributed.launch --nproc_per_node=2 m
 #     --out_dir /media/qiao/Videos/SLDataSet/20221102real/scene_02_main-m6 \
 #     --run_tag pat13460
 
-CUDA_VISIBLE_DEVICES=0,1 python -m torch.distributed.launch --nproc_per_node=2 main.py \
-    --config ./params/xyz2density_train_lnx.ini \
-    --pat_set 1,4,5,0,6 \
-    --train_dir /media/qiao/Videos/SLDataSet/20221028real/scene_03 \
-    --out_dir /media/qiao/Videos/SLDataSet/20221028real/scene_03_main-m6 \
-    --run_tag pat14506
+# CUDA_VISIBLE_DEVICES=0,1 python -m torch.distributed.launch --nproc_per_node=2 main.py \
+#     --config ./params/xyz2density_train_lnx.ini \
+#     --pat_set 1,4,5,0,6 \
+#     --train_dir /media/qiao/Videos/SLDataSet/20221028real/scene_03 \
+#     --out_dir /media/qiao/Videos/SLDataSet/20221028real/scene_03_main-m6 \
+#     --run_tag pat14506

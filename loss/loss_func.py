@@ -47,6 +47,15 @@ class SuperviseDistLoss(BaseLoss):
         return val, err_map
 
 
+class SuperviseBCEMaskLoss(BaseLoss):
+    def __init__(self, name='DEFAULT'):
+        super().__init__(name)
+
+    def forward(self, pred, target):
+        val = torch.nn.functional.binary_cross_entropy(pred, target)
+        return val
+
+
 class NeighborGradientLoss(BaseLoss):
     def __init__(self, rad, name='NeighborGradientLoss', dist='l2'):
         super().__init__(name)

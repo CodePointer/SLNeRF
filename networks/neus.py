@@ -670,17 +670,17 @@ class NeuSLRenderer:
         dirs = rays_d[:, None, :].expand(pts.shape)
 
         pts = pts.reshape(-1, 3)
-        pts = self.pts_normalize(pts)
+        pts_n = self.pts_normalize(pts)
         dirs = dirs.reshape(-1, 3)
 
-        sdf_nn_output = sdf_network(pts)
+        sdf_nn_output = sdf_network(pts_n)
         sdf = sdf_nn_output[0]
         # sdf = sdf_nn_output[:, :1]
         # feature_vector = sdf_nn_output[:, 1:]
 
-        gradients = sdf_network.gradient(pts).squeeze()
+        gradients = sdf_network.gradient(pts_n).squeeze()
         # sampled_color = color_network(pts).reshape(batch_size, n_samples, -1)
-        projected_color = color_network(pts).reshape(batch_size, n_samples, -1)
+        projected_color = color_network(pts).reshape(batch_size, n_samples, -1)  # TODO: ColorNetwork? 是否要归一化？
         sampled_color = reflect[:, None, :1] * projected_color + reflect[:, None, 1:]
 
         inv_s = deviation_network(torch.zeros([1, 3]))[:, :1].clip(1e-6, 1e6)           # Single parameter

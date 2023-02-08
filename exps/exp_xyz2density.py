@@ -15,7 +15,7 @@ from dataset.multi_pat_dataset import MultiPatDataset
 
 from loss.loss_func import SuperviseDistLoss, NeighborGradientLossWithEdge, PeakEncourageLoss
 from networks.layers import WarpFromXyz, PatternSampler
-from networks.neus import NeuSLRenderer, DensityNetwork, ReflectNetwork
+from networks.neus.renderer import NeuSLRenderer, DensityNetwork, ReflectNetwork
 
 
 # - Coding Part - #

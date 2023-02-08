@@ -78,12 +78,12 @@ class WarpFromDepth(torch.nn.Module):
 
 
 class WarpFromXyz(torch.nn.Module):
-    def __init__(self, calib_para, pat_mat, bound, device=None):
+    def __init__(self, calib_para, pat_mat, scale_mat, device=None):
         """
 
         :param calib_para:
         :param pat_mat: [C, Hp, Wp]
-        :param bound:
+        :param scale_mat:
         :param device:
         """
         super().__init__()
@@ -99,11 +99,7 @@ class WarpFromXyz(torch.nn.Module):
         self.ext_tran = plb.a2t(ext_tran).to(device)
         self.pat_intrin = plb.a2t(pat_intrin).to(device)
 
-        self.bound = bound
-        self.center_pt = (bound[1] + bound[0]) / 2.0
-        self.center_pt = self.center_pt.reshape(1, -1)  # [1, 3]
-        self.scale = (bound[1] - bound[0]) * 0.5
-        self.scale = self.scale.reshape(1, -1)  # [1, 3]
+        self.scale_mat = torch.from_numpy(scale_mat).to(device)
         self.pat_mat = pat_mat.unsqueeze(0)  # [1, C, Hs, Ws]
 
         pass
@@ -116,7 +112,7 @@ class WarpFromXyz(torch.nn.Module):
         :return:
             warped_set: [N, 3]
         """
-        xyz_cam = xyz_set * self.scale + self.center_pt  # [N, 3]
+        xyz_cam = xyz_set * self.scale_mat[0, 0] + self.scale_mat[:3, 3][None, :]  # [N, 3]
         xyz_pat = torch.matmul(self.ext_rot, xyz_cam[:, :, None]) + self.ext_tran[:, None]  # [N, 3, 1]
         xyz_pat = xyz_pat.squeeze(2)
 
@@ -131,40 +127,14 @@ class WarpFromXyz(torch.nn.Module):
         uv_mat = torch.stack([uu, vv], dim=-1).reshape(1, -1, 1, 2)  # [1, N, 1, 2]
 
         sample_mat = torch.nn.functional.grid_sample(self.pat_mat, uv_mat, padding_mode='border', align_corners=False)
-        if mask_flag:
-            one_mat = torch.ones_like(self.pat_mat)
-            mask = torch.nn.functional.grid_sample(one_mat, uv_mat, padding_mode='zeros', align_corners=False)
-            mask[mask > 0.99] = 1.0
-            mask[mask < 1.0] = 0.0
-            sample_mat *= mask
-
-        return sample_mat.squeeze(axis=3)[0].permute(1, 0)  # [N, C]
-
-        # hei_s, wid_s = src_mat.shape[-2:]
-        #
-        # # Calculate uu, vv
-        # denominator = self.abc_mat[2] * depth_mat + self.ext_tran[2]
-        # xx = (self.abc_mat[0] * depth_mat + self.ext_tran[0]) / denominator
-        # yy = (self.abc_mat[1] * depth_mat + self.ext_tran[1]) / denominator
-        # fu, fv, du, dv = self.pat_intrin
-        # uu = fu * xx + du  # [N, 1, Hd, Wd]
-        # vv = fv * yy + dv  # [N, 1, Hd, Wd]
-        #
-        # # Warp by grid_sample
-        # uu_mat = uu.permute(0, 2, 3, 1)
-        # vv_mat = vv.permute(0, 2, 3, 1)
-        # xx_grid = 2.0 * uu_mat / (wid_s - 1) - 1.0
-        # yy_grid = 2.0 * vv_mat / (hei_s - 1) - 1.0
-        # xy_grid = torch.cat([xx_grid, yy_grid], dim=3)
-        #
-        # warped_mat = torch.nn.functional.grid_sample(src_mat, xy_grid, padding_mode='border', align_corners=False)
         # if mask_flag:
-        #     one_mat = torch.zeros_like(src_mat)
-        #     mask = torch.nn.functional.grid_sample(one_mat, xy_grid, padding_mode='zeros', align_corners=False)
+        #     one_mat = torch.ones_like(self.pat_mat)
+        #     mask = torch.nn.functional.grid_sample(one_mat, uv_mat, padding_mode='zeros', align_corners=False)
         #     mask[mask > 0.99] = 1.0
         #     mask[mask < 1.0] = 0.0
-        #     warped_mat *= mask
-        # return warped_mat
+        #     sample_mat *= mask
+
+        return sample_mat.squeeze(axis=3)[0].permute(1, 0)  # [N, C]
 
 
 class PatternSampler(torch.nn.Module):
