@@ -22,6 +22,7 @@ class MultiPatDataset(torch.utils.data.Dataset):
         self.intrinsics = plb.str2array(calib_para['img_intrin'], np.float32)
         self.intrinsics = plb.a2t(self.intrinsics).to(device)
         self.img_size = plb.str2tuple(calib_para['img_size'], item_type=int)
+        self.img_size = (self.img_size[1], self.img_size[0])
 
         # 读取img，pat，根据pat_idx_set。把它们stack到一起。
         img_list, pat_list = [], []
@@ -43,8 +44,8 @@ class MultiPatDataset(torch.utils.data.Dataset):
 
         # Get coord candidate
         self.mask_occ = torch.ones([1, *self.img_size], dtype=torch.float32)
-        if (scene_folder / 'mask' / 'mask_occ.png').exists():
-            self.mask_occ = plb.imload(scene_folder / 'mask' / 'mask_occ.png').to(torch.float32)
+        if (scene_folder / 'gt' / 'mask_occ.png').exists():
+            self.mask_occ = plb.imload(scene_folder / 'gt' / 'mask_occ.png').to(torch.float32)
         
         # To device
         self.img_set = self.img_set.to(device)  # [C, H, W]

@@ -6,7 +6,7 @@
 # @File:      evaluate_result.py
 # @Software:  PyCharm
 # @Description:
-#   This file is used for depth map evaluation.
+#   该文件已经可以完成自动化结果输出。
 #   Notice the coordinate for open3d is: left x, up y, left handed.
 
 # - Package Imports - #
@@ -18,169 +18,272 @@ import cv2
 import torch
 import openpyxl
 import open3d as o3d
+from tqdm import tqdm
+import openpyxl
+from openpyxl.styles import Alignment
+import shutil
 
 import pointerlib as plb
 
 
 # - Coding Part - #
-from dataset.multi_pat_dataset import MultiPatDataset
-from networks.layers import WarpFromDepth
+class Evaluator:
+    def __init__(self, workbook, flush_flag):
+        self.workbook = openpyxl.load_workbook(str(workbook))
+        self.workbook_path = workbook
+        self.flush_flag = flush_flag
+        self.calib_para = None
+        self.visualizer = None
 
+    def evaluate_sequence(self, scene_name):
+        work_sheet = self.workbook[scene_name]
+        data_path = Path(work_sheet['B1'].value)
+        out_path = Path(work_sheet['B2'].value)
 
-def evaluate(depth_gt, depth_map, mask, cell_set):
-    diff = (depth_gt - depth_map)
-    diff_vec = diff[mask > 0.0]
-    total_num = diff_vec.shape[0]
-    err10_num = (torch.abs(diff_vec) > 1.0).float().sum()
-    err20_num = (torch.abs(diff_vec) > 2.0).float().sum()
-    err50_num = (torch.abs(diff_vec) > 5.0).float().sum()
-    avg = torch.abs(diff_vec).sum() / total_num
-    cell_set[0].value = f'{err10_num / total_num * 100.0:.2f}'
-    cell_set[1].value = f'{err20_num / total_num * 100.0:.2f}'
-    cell_set[2].value = f'{err50_num / total_num * 100.0:.2f}'
-    cell_set[3].value = f'{avg:.3f}'
+        # load parameters
+        config = ConfigParser()
+        config.read(str(data_path / 'config.ini'), encoding='utf-8')
+        self.calib_para = config['RawCalib']
+        self.visualizer = plb.DepthVisualizer(
+            img_size=plb.str2tuple(self.calib_para['img_size'], item_type=int),
+            img_intrin=plb.str2tuple(self.calib_para['img_intrin'], item_type=float),
+            pos=[-50.0, 50.0, 50.0],
+        )
 
+        # Get all exp_tags
+        start_row = 5
+        cmp_sets = []
 
-def draw_diff_viz(depth_gt, depth_map, mask):
-    diff = (depth_gt - depth_map)
-    step_err = torch.ones_like(diff)
-    step_err[torch.abs(diff) > 1.0] = 2.0
-    step_err[torch.abs(diff) > 2.0] = 3.0
-    step_err[torch.abs(diff) > 5.0] = 4.0
-    step_vis = plb.VisualFactory.err_visual(step_err, mask, max_val=4.0, color_map=cv2.COLORMAP_WINTER)
-    step_vis = cv2.cvtColor(plb.t2a(step_vis), cv2.COLOR_BGR2RGB)
-    return step_vis
+        current_row = start_row
+        exp_set = sorted([x for x in out_path.glob('*') if x.is_dir()])
+        for i, exp_path in enumerate(exp_set):
+            epoch_set = sorted([x for x in (exp_path / 'output').glob('e_*') if x.is_dir()],
+                               key=lambda x: int(x.name.split('_')[1]))
+            for j, epoch_folder in enumerate(epoch_set):
+                work_sheet.cell(current_row, 1).value = exp_path.name
+                work_sheet.cell(current_row, 2).value = str(epoch_folder)
+                work_sheet.cell(current_row, 3).value = int(epoch_folder.name.split('_')[1])
+                cmp_sets.append(self._build_up_cmp_set(data_path, epoch_folder))
+                current_row += 1
+        total_row = current_row
 
+        # Evaluate: column = 4,5,6,7
+        for row_idx in tqdm(range(start_row, total_row), desc=scene_name):
+            depth_gt, depth_est, mask_gt = cmp_sets[row_idx - start_row]
+            epoch_dir = Path(work_sheet.cell(row_idx, 2).value)
 
-def process_scene(worksheet, params):
-    data_path = Path(worksheet['B1'].value)
-    res_path = Path(worksheet['B3'].value)
-    depth_scale = 10.0 / worksheet['K1'].value
-
-    # Get methods set
-    all_value = [worksheet.cell(row=4, column=i + 1).value for i in range(worksheet.max_column)]
-    methods = [x for x in all_value if x is not None]
-
-    # Get experiments
-    all_value = [worksheet.cell(row=i + 1, column=1).value for i in range(5, worksheet.max_row)]
-    exps = [x for x in all_value if x is not None]
-
-    # Valid depth list
-    depth_list = []
-
-    # Load GT
-    depth_gt = plb.imload(data_path / 'depth_map.png', scale=10.0)
-    mask_gt = plb.imload(data_path / 'mask' / 'mask_occ.png')
-    if not (res_path / 'gt_viz.png').exists():
-        depth_list.append((depth_gt, res_path / 'gt_viz.png'))
-
-    # Evaluate
-    for met_i, method in enumerate(methods):
-        for exp_i, exp in enumerate(exps):
-            # Get cells
-            # Start from B6
-            row_i, col_i = exp_i + 6, met_i * 4 + 2
-            cell_set = [worksheet.cell(row=row_i, column=col_i + x) for x in range(4)]
-            flag_all_filled = False
-            for cell in cell_set:
-                flag_all_filled = flag_all_filled and cell.value is not None
-
-            if params['clear'] and not flag_all_filled:
-                for cell in cell_set:
-                    cell.value = None
-
-            # Check files
-            depth_target_path = res_path / method / f'{exp}.png'
-            if depth_target_path.exists():
-                depth_target = plb.imload(depth_target_path, scale=10.0)
-                if not (depth_target_path.parent / f'{exp}_viz.png').exists():
-                    depth_list.append((depth_target, depth_target_path.parent / f'{exp}_viz.png'))
-
-                if not params['recal'] and flag_all_filled:
-                    continue
-
-                evaluate(depth_gt * depth_scale, depth_target * depth_scale, mask_gt, cell_set)
-                diff_map = draw_diff_viz(depth_gt * depth_scale, depth_target * depth_scale, mask_gt)
-                plb.imsave(depth_target_path.parent / f'{exp}_diff.png', diff_map)
+            if not depth_est.exists():
+                self.visualizer.set_mesh(epoch_dir / 'mesh.ply')
+                self.visualizer.get_depth(depth_est)
             else:
-                depth_target_path.parent.mkdir(parents=True, exist_ok=True)
+                self.visualizer.set_depth(depth_est, mask_gt)
 
-    draw_depth_viz(
-        calib_file=data_path / 'config.ini',
-        json_file=data_path / 'open3dvis.json',
-        depth_list=depth_list,
-        mask_map=mask_gt
-    )
-    pass
+            self.visualizer.update()
 
+            # Check if depth2pcd is needed.
+            if not (epoch_dir / 'pcd.asc').exists():
+                self.visualizer.get_pcd(epoch_dir / 'pcd.asc')
 
-def draw_depth_viz(calib_file, json_file, depth_list, mask_map):
-    if len(depth_list) == 0:
-        return
+            # Check if depth vis is needed.
+            if not (epoch_dir / 'vis.png').exists():
+                self.visualizer.get_view(epoch_dir / 'vis.png')
 
-    config = ConfigParser()
-    config.read(str(calib_file), encoding='utf-8')
-    calib_para = config['Calibration']
-    wid, hei = plb.str2tuple(calib_para['img_size'], item_type=int)
-    wid, hei = 640, 480
-    fx, fy, dx, dy = plb.str2tuple(calib_para['img_intrin'], item_type=float)
-    vis = o3d.visualization.Visualizer()
-    vis.create_window(width=wid, height=hei)
-    vis.get_render_option().point_size = 1.0
-    # vis.get_render_option().load_from_json(str(json_file))
-    # param = None
-    if not json_file.exists():
-        depth_map = depth_list[0][0]
-        depth_viz = plb.DepthMapVisual(depth_map, (fx + fy) / 2.0, mask_map)
-        xyz_set = depth_viz.to_xyz_set()
-        xyz_set = xyz_set[mask_map.reshape(-1) == 1.0]
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(xyz_set)
-        pcd.estimate_normals(
-            search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=30.0, max_nn=30)
+            # Evaluate here.
+            res, diff, mask = self._evaluate_exp_outs(cmp_sets[row_idx - start_row])
+
+            # Check if step vis is needed.
+            if not (epoch_dir / 'step_vis.png').exists():
+                step_vis = self._draw_step_vis(diff, mask)
+                plb.imsave(epoch_dir / 'step_vis.png', step_vis)
+
+            # Write
+            work_sheet.cell(row_idx, 4).value = float(f'{res[0] * 100.0:.2f}')
+            work_sheet.cell(row_idx, 5).value = float(f'{res[1] * 100.0:.2f}')
+            work_sheet.cell(row_idx, 6).value = float(f'{res[2] * 100.0:.2f}')
+            work_sheet.cell(row_idx, 7).value = float(f'{res[3]:.3f}')
+
+        self.workbook.save(self.workbook_path)
+        pass
+
+    def _build_up_cmp_set(self, data_path, out_path):
+        # cmp_set = []
+
+        depth_gt_file = data_path / 'gt' / 'depth_gt.png'
+        mask_gt_file = data_path / 'gt' / 'mask_occ.png'
+        depth_res_file = out_path / 'depth.png'
+
+        return depth_gt_file, depth_res_file, mask_gt_file
+
+    def _evaluate_exp_outs(self, cmp_set):
+
+        depth_gt, depth_res, mask_gt = cmp_set
+        depth_gt = plb.imload(depth_gt, scale=1e2)
+        depth_res = plb.imload(depth_res, scale=1e2)
+        mask_gt = plb.imload(mask_gt)
+
+        diff = (depth_gt - depth_res)
+        diff_vec = diff[mask_gt > 0.0]
+        total_num = diff_vec.shape[0]
+        err10_num = (torch.abs(diff_vec) > 1.0).float().sum() / total_num
+        err20_num = (torch.abs(diff_vec) > 2.0).float().sum() / total_num
+        err50_num = (torch.abs(diff_vec) > 5.0).float().sum() / total_num
+        avg = torch.abs(diff_vec).sum() / total_num
+        res_array = np.array([err10_num, err20_num, err50_num, avg])
+
+        return res_array, diff, mask_gt
+
+    def _ply2depth(self, ply_file, visible=False):
+        wid, hei = plb.str2tuple(self.calib_para['img_size'], item_type=int)
+        fx, fy, dx, dy = plb.str2tuple(self.calib_para['img_intrin'], item_type=float)
+        vis = o3d.visualization.Visualizer()
+        vis.create_window(width=wid, height=hei, visible=visible)
+        inf_pinhole = o3d.camera.PinholeCameraIntrinsic(
+            width=wid, height=hei,
+            fx=fx, fy=fy, cx=dx, cy=dy
         )
-        pcd.colors = o3d.utility.Vector3dVector(np.ones_like(xyz_set) * 0.5)
-        vis.add_geometry(pcd)
-        vis.run()
-        param = vis.get_view_control().convert_to_pinhole_camera_parameters()
-        o3d.io.write_pinhole_camera_parameters(str(json_file), param)
-        vis.clear_geometries()
-    ctr = vis.get_view_control()
-    param = o3d.io.read_pinhole_camera_parameters(str(json_file))
+        camera = o3d.camera.PinholeCameraParameters()
+        camera.intrinsic = inf_pinhole
+        camera.extrinsic = np.eye(4, dtype=np.float64)
+        ctr = vis.get_view_control()
+        ctr.convert_from_pinhole_camera_parameters(camera, allow_arbitrary=True)
 
-    for depth_map, out_path in depth_list:
-        # Create mesh
-        depth_viz = plb.DepthMapVisual(depth_map, (fx + fy) / 2.0, mask_map)
-        xyz_set = depth_viz.to_xyz_set()
-        xyz_set = xyz_set[mask_map.reshape(-1) == 1.0]
-        np.savetxt(str(out_path.parent / f'{out_path.stem}.asc'), xyz_set,
-                   fmt='%.2f', delimiter=',', newline='\n', encoding='utf-8')
+        vis.poll_events()
+        vis.update_renderer()
+        time.sleep(0.01)
 
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(xyz_set)
-        pcd.estimate_normals(
-            search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=30.0, max_nn=30)
-        )
-        pcd.colors = o3d.utility.Vector3dVector(np.ones_like(xyz_set) * 0.5)
-        vis.add_geometry(pcd)
-        ctr.convert_from_pinhole_camera_parameters(param)
+        mesh = o3d.io.read_triangle_mesh(str(ply_file))
+
+        # Coordinate change
+        vertices_np = np.asarray(mesh.vertices)
+        mesh.vertices = o3d.utility.Vector3dVector(vertices_np)
+
+        mesh.compute_vertex_normals()
+
+        vis.add_geometry(mesh)
+        ctr.convert_from_pinhole_camera_parameters(camera, allow_arbitrary=True)
 
         vis.poll_events()
         vis.update_renderer()
         time.sleep(0.01)
 
         # vis.run()
-        # vis.get_render_option().save_to_json(str(json_file))
 
-        image = vis.capture_screen_float_buffer()
-        image = np.asarray(image).copy()
-        plb.imsave(out_path, image)
+        depth = vis.capture_depth_float_buffer()
+        depth = np.asarray(depth).copy()
+        depth[np.isnan(depth)] = 0.0
 
-        # Write result
+        img = vis.capture_screen_float_buffer()
+        img = np.asarray(img).copy()
+
         vis.clear_geometries()
-        print(out_path.parent.name, out_path.name)
+        vis.destroy_window()
 
-    return
+        return depth, img
+
+    def _depth2pcd(self, depth_file, mask_file):
+        fx, fy, dx, dy = plb.str2tuple(self.calib_para['img_intrin'], item_type=float)
+        depth_map = plb.imload(depth_file, scale=10.0, flag_tensor=False)
+        mask = plb.imload(mask_file, flag_tensor=False)
+        depth_viz = plb.DepthMapVisual(depth_map, (fx + fy) / 2.0, mask)
+        xyz_set = depth_viz.to_xyz_set()
+        xyz_set = xyz_set[mask.reshape(-1) == 1.0]
+        xyz_set = xyz_set[xyz_set[:, -1] > 10.0, :]
+        return xyz_set
+
+    def _pcd2vis(self, pcd_file, visible=False):
+        wid, hei = plb.str2tuple(self.calib_para['img_size'], item_type=int)
+        fx, fy, dx, dy = plb.str2tuple(self.calib_para['img_intrin'], item_type=float)
+        vis = o3d.visualization.Visualizer()
+        vis.create_window(width=wid, height=hei, visible=visible)
+        inf_pinhole = o3d.camera.PinholeCameraIntrinsic(
+            width=wid, height=hei,
+            fx=fx, fy=fy, cx=dx, cy=dy
+        )
+        camera = o3d.camera.PinholeCameraParameters()
+        camera.intrinsic = inf_pinhole
+        camera.extrinsic = np.eye(4, dtype=np.float64)
+        ctr = vis.get_view_control()
+        ctr.convert_from_pinhole_camera_parameters(camera, allow_arbitrary=True)
+
+        vis.poll_events()
+        vis.update_renderer()
+        time.sleep(0.01)
+
+        # Create pcd
+        xyz_set = np.loadtxt(str(pcd_file), delimiter=',', encoding='utf-8')
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(xyz_set)
+        pcd.estimate_normals(
+            search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=30.0, max_nn=30)
+        )
+        pcd.colors = o3d.utility.Vector3dVector(np.ones_like(xyz_set) * 0.5)
+
+        vis.add_geometry(pcd)
+        ctr.convert_from_pinhole_camera_parameters(camera, allow_arbitrary=True)
+
+        vis.poll_events()
+        vis.update_renderer()
+        time.sleep(0.01)
+
+        # vis.run()
+
+        img = vis.capture_screen_float_buffer()
+        img = np.asarray(img).copy()
+
+        vis.clear_geometries()
+        vis.destroy_window()
+
+        return img
+
+    def _draw_step_vis(self, diff, mask):
+        step_err = torch.ones_like(diff)
+        step_err[torch.abs(diff) > 1.0] = 2.0
+        step_err[torch.abs(diff) > 2.0] = 3.0
+        step_err[torch.abs(diff) > 5.0] = 4.0
+        step_vis = plb.VisualFactory.err_visual(step_err, mask, max_val=4.0, color_map=cv2.COLORMAP_WINTER)
+        step_vis = cv2.cvtColor(plb.t2a(step_vis), cv2.COLOR_BGR2RGB)
+        return step_vis
+
+    def sum_average(self, scene_name):
+        src_work_sheet = self.workbook[scene_name]
+        dst_work_sheet = self.workbook[f'{scene_name}-Sum']
+
+        # Get all exp_tags & values
+        start_row = 5
+        raw_results = []
+        for row_idx in range(start_row, src_work_sheet.max_row + 1):
+            raw_results.append([
+                src_work_sheet.cell(row_idx, 1).value,
+                [
+                    float(src_work_sheet.cell(row_idx, 3).value),
+                    float(src_work_sheet.cell(row_idx, 4).value),
+                    float(src_work_sheet.cell(row_idx, 5).value),
+                    float(src_work_sheet.cell(row_idx, 6).value),
+                ]
+            ])
+
+        # Group
+        grouped_results = {}
+        for exp_tag, eval_res in raw_results:
+            exp_key = exp_tag
+            if '_exp' in exp_tag:
+                exp_key = exp_tag.split('_exp')[0]
+            if exp_key not in grouped_results:
+                grouped_results[exp_key] = []
+            grouped_results[exp_key].append(np.array(eval_res))
+
+        # Put into new sheet
+        for i, exp_tag in enumerate(grouped_results):
+            dst_work_sheet.cell(2 + i, 1).value = exp_tag
+            exp_res = np.stack(grouped_results[exp_tag], axis=0)
+            exp_avg = np.average(exp_res, axis=0)
+            dst_work_sheet.cell(2 + i, 2).value = f'{exp_avg[0]:.2f}'
+            dst_work_sheet.cell(2 + i, 3).value = f'{exp_avg[1]:.2f}'
+            dst_work_sheet.cell(2 + i, 4).value = f'{exp_avg[2]:.2f}'
+            dst_work_sheet.cell(2 + i, 5).value = f'{exp_avg[3]:.3f}'
+
+        self.workbook.save(self.workbook_path)
+        pass
 
 
 def export_text_to_file(workbook, params):
@@ -223,42 +326,13 @@ def export_text_to_file(workbook, params):
 
 
 def main():
-    # Parameters
-    params = {
-        'recal': False,
-        'clear': True,
-        'workbook': 'C:/Users/qiao/Desktop/CVPR2023_Sub/Result.xlsx',
-        'txt_name': 'C:/Users/qiao/Desktop/CVPR2023_Sub/ForLatex.txt'
-    }
-    target_sheet_names = None
 
-    # Load workbook and process sheets
-    workbook = openpyxl.load_workbook(str(params['workbook']))
-
-    if target_sheet_names is None:
-        target_sheet_names = workbook.get_sheet_names()
-    for scene_name in target_sheet_names:
-        print(scene_name)
-        if scene_name != 'ablation':
-            continue
-        process_scene(workbook[scene_name], params)
-
-    export_text_to_file(workbook, params)
-
-    workbook.save(str(params['workbook']))
-
-
-def test():
-    mesh = o3d.io.read_triangle_mesh(r'C:\Users\qiao\Desktop\CVPR2023_Sub\scene_01\NeuS\pat5.ply')
-    mesh.compute_vertex_normals()
-    vis = o3d.visualization.Visualizer()
-    vis.create_window(width=640, height=480)
-    vis.get_render_option().point_size = 1.0
-    vis.add_geometry(mesh)
-    vis.run()
-    image = vis.capture_screen_float_buffer()
-    image = np.asarray(image).copy()
-    plb.imsave('tmp.png', image)
+    app = Evaluator(
+        workbook='C:/SLDataSet/SLNeRF/result.xlsx',
+        flush_flag=False,
+    )
+    app.evaluate_sequence('scene_00')
+    # app.sum_average('NonRigidReal')
 
 
 def main_sup():
@@ -367,9 +441,8 @@ def clean_asc():
                    fmt='%.2f', delimiter=' ', newline='\n', encoding='utf-8')
 
 
-
 if __name__ == '__main__':
     # test()
-    # main()
+    main()
     # main_sup()
-    draw_gifs()
+    # draw_gifs()

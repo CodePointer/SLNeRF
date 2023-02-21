@@ -7,6 +7,7 @@ from args import get_args, post_process
 from exps.exp_xyz2sdf import ExpXyz2SdfWorker
 # from exps.exp_xyz2density import ExpXyz2DensityWorker
 # from exps.exp_vanilla import ExpVanillaNeRF
+from exps.exp_classic import ExpClassicWorker
 
 
 # - Coding Part - #
@@ -16,6 +17,9 @@ def get_worker(args):
         'xyz2sdf': ExpXyz2SdfWorker,
         # 'xyz2density': ExpXyz2DensityWorker,
         # 'vanilla': ExpVanillaNeRF,
+        'ClassicBFH': ExpClassicWorker,
+        'ClassicBFN': ExpClassicWorker,
+        'ClassicGCC': ExpClassicWorker,
     }
     assert args.argset in worker_set.keys()
     return worker_set[args.argset](args)

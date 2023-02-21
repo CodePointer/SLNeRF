@@ -62,15 +62,15 @@ class ExpXyz2SdfWorker(Worker):
         config = ConfigParser()
         config.read(str(self.train_dir / 'config.ini'), encoding='utf-8')
 
-        pat_idx_set = [int(x.strip()) for x in self.args.pat_set.split(',')]
-        ref_img_set = [int(x.strip()) for x in self.args.reflect_set.split(',')]
-        self.focus_len = plb.str2array(config['Calibration']['img_intrin'], np.float32)[0]
+        pat_idx_set = [x.strip() for x in self.args.pat_set.split(',')]
+        ref_img_set = [x.strip() for x in self.args.reflect_set.split(',')]
+        self.focus_len = plb.str2array(config['RawCalib']['img_intrin'], np.float32)[0]
         self.pat_dataset = MultiPatDataset(
             scene_folder=self.train_dir,
             pat_idx_set=pat_idx_set,
             ref_img_set=ref_img_set,
             sample_num=self.sample_num,
-            calib_para=config['Calibration'],
+            calib_para=config['RawCalib'],
             device=self.device
         )
         self.train_dataset = self.pat_dataset
@@ -105,7 +105,7 @@ class ExpXyz2SdfWorker(Worker):
         config = ConfigParser()
         config.read(str(self.train_dir / 'config.ini'), encoding='utf-8')
         self.warp_layer = WarpFromXyz(
-            calib_para=config['Calibration'],
+            calib_para=config['RawCalib'],
             pat_mat=self.pat_dataset.get_pat_set(),
             scale_mat=self.pat_dataset.get_scale_mat(),
             device=self.device
@@ -332,7 +332,9 @@ class ExpXyz2SdfWorker(Worker):
 
             out_rgb_fine = []
             out_norm = []
+            pbar = tqdm(total=len(rays_o_set), desc=f'Vis-Resolution={resolution_level}')
             for rays_o, rays_v, reflect in zip(rays_o_set, rays_v_set, reflect_set):
+                pbar.update(1)
                 near, far = self.pat_dataset.near_far_from_sphere(rays_o, rays_v)
                 render_out = self.renderer.render(
                     rays_o, rays_v, reflect, near, far,
@@ -345,6 +347,7 @@ class ExpXyz2SdfWorker(Worker):
                 normals = normals.sum(dim=1).detach().cpu()
                 out_norm.append(normals)
                 del render_out
+            pbar.close()
 
             img_render_list = []
             if len(out_rgb_fine) > 0:
