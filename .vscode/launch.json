@@ -12,7 +12,7 @@
             "console": "integratedTerminal",
             "args": [
                 "--config",
-                "${workspaceFolder}/params/xyz2sdf_eval.ini",
+                "${workspaceFolder}/params/xyz2sdf_train.ini",
             ],
             "env": {
                 "CUDA_VISIBLE_DEVICES": "0",

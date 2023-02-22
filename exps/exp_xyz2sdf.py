@@ -248,7 +248,7 @@ class ExpXyz2SdfWorker(Worker):
                 self.history_best = [total_loss, True]
 
         # For image
-        if self.args.debug_mode or epoch % self.args.img_stone == 0:
+        if self.args.debug_mode or (self.args.img_stone > 0 and epoch % self.args.img_stone == 0):
             self.callback_img_visual(None, None, tag, epoch)
 
         # For save
