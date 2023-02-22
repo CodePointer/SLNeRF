@@ -27,11 +27,13 @@ class ExpXyz2DensityWorker(Worker):
         """
         super().__init__(args)
 
+        # Fix for NeRF-like training.
+        self.N = 1
+        self.sample_num = self.args.batch_num
+
         # init_dataset()
         self.focus_len = None
         self.pat_dataset = None
-        self.sample_num = self.args.batch_num
-        self.bound = None
 
         # init_networks()
         self.renderer = None
@@ -102,7 +104,7 @@ class ExpXyz2DensityWorker(Worker):
         config.read(str(self.train_dir / 'config.ini'), encoding='utf-8')
         warp_layer = WarpFromXyz(
             calib_para=config['RawCalib'],
-            pat_mat=self.pat_dataset.pat_set,
+            pat_mat=self.pat_dataset.get_pat_set(),
             scale_mat=self.pat_dataset.get_scale_mat(),
             device=self.device
         )
@@ -147,6 +149,7 @@ class ExpXyz2DensityWorker(Worker):
         alpha_val = self.alpha if self.args.ablation_tag != 'ours-samp' else None
         near, far = self.pat_dataset.near_far_from_sphere(data['rays_o'], data['rays_v'])
         render_out = self.renderer.render_density(
+            rays_o=data['rays_o'],
             rays_d=data['rays_v'],
             reflect=data['reflect'],
             near=near,
@@ -322,7 +325,7 @@ class ExpXyz2DensityWorker(Worker):
             pbar.update(1)
             near, far = self.pat_dataset.near_far_from_sphere(rays_o, rays_d)
             render_out = self.renderer.render_density(
-                rays_d, reflect, near, far, alpha=self.alpha
+                rays_o, rays_d, reflect, near, far, alpha=self.alpha
             )
 
             if require_contain('img_list', 'wrp_viz'):
@@ -336,8 +339,11 @@ class ExpXyz2DensityWorker(Worker):
                 # max_idx = torch.argmax(weights, dim=1)  # [N]
                 # mid_z = mid_z_vals[torch.arange(max_idx.shape[0]), max_idx]
                 # out_depth.append(mid_z.detach().cpu())
-                depth_val = render_out['depth'].reshape(-1)
-                out_depth.append(depth_val.detach().cpu())
+                pts_sum = render_out['pts_sum'].detach().cpu()
+                scale_mat = torch.from_numpy(self.pat_dataset.get_scale_mat())
+                pts_sum_wrd = pts_sum * scale_mat[0, 0] + scale_mat[:3, 3][None]
+                depth_val = pts_sum_wrd[:, -1:]
+                out_depth.append(depth_val)
 
             if require_contain('query_z'):
                 out_z.append(render_out['z_vals'].detach().cpu())

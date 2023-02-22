@@ -126,7 +126,7 @@ class WarpFromXyz(torch.nn.Module):
         vv = 2.0 * pixels_v / (hei_s - 1) - 1.0
         uv_mat = torch.stack([uu, vv], dim=-1).reshape(1, -1, 1, 2)  # [1, N, 1, 2]
 
-        sample_mat = torch.nn.functional.grid_sample(self.pat_mat, uv_mat, padding_mode='border', align_corners=False)
+        sample_mat = torch.nn.functional.grid_sample(self.pat_mat, uv_mat, padding_mode='zeros', align_corners=False)
         # if mask_flag:
         #     one_mat = torch.ones_like(self.pat_mat)
         #     mask = torch.nn.functional.grid_sample(one_mat, uv_mat, padding_mode='zeros', align_corners=False)
