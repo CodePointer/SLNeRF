@@ -466,8 +466,8 @@ class NeuSLRenderer:
 
         return z_vals, sdf
 
-    def render_density(self, rays_d, reflect, near, far, alpha=None):
-        batch_size = len(rays_d)
+    def render_density(self, rays_o, rays_d, reflect, near, far, alpha=None):
+        batch_size = len(rays_o)
         sample_dist = 2.0 / self.n_samples  # Assuming the region of interest is a unit sphere
         z_vals = torch.linspace(0.0, 1.0, self.n_samples, device=rays_d.device)
         z_vals = near + (far - near) * z_vals[None, :]
@@ -481,7 +481,7 @@ class NeuSLRenderer:
         # Up sample
         if self.n_importance > 0:
             with torch.no_grad():
-                pts = rays_d[:, None, :] * z_vals[..., :, None]
+                pts = rays_o[:, None, :] + rays_d[:, None, :] * z_vals[..., :, None]
                 sdf = self.sdf_network.sdf(pts.reshape(-1, 3)).reshape(batch_size, self.n_samples)
 
                 if alpha is not None:
@@ -503,7 +503,7 @@ class NeuSLRenderer:
         batch_size, n_samples = z_vals.shape  # [N, C]
 
         # Section midpoints
-        pts = rays_d[:, None, :] * z_vals[..., :, None]  # n_rays, n_samples, 3
+        pts = rays_o[:, None, :] + rays_d[:, None, :] * z_vals[..., :, None]  # n_rays, n_samples, 3
         density, features = self.sdf_network(pts.reshape(-1, 3))
         density = density.reshape(z_vals.shape)
 

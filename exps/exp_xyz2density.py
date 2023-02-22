@@ -27,11 +27,13 @@ class ExpXyz2DensityWorker(Worker):
         """
         super().__init__(args)
 
+        # Fix for NeRF-like training.
+        self.N = 1
+        self.sample_num = self.args.batch_num
+
         # init_dataset()
         self.focus_len = None
         self.pat_dataset = None
-        self.sample_num = self.args.batch_num
-        self.bound = None
 
         # init_networks()
         self.renderer = None
@@ -147,6 +149,7 @@ class ExpXyz2DensityWorker(Worker):
         alpha_val = self.alpha if self.args.ablation_tag != 'ours-samp' else None
         near, far = self.pat_dataset.near_far_from_sphere(data['rays_o'], data['rays_v'])
         render_out = self.renderer.render_density(
+            rays_o=data['rays_o'],
             rays_d=data['rays_v'],
             reflect=data['reflect'],
             near=near,
@@ -322,7 +325,7 @@ class ExpXyz2DensityWorker(Worker):
             pbar.update(1)
             near, far = self.pat_dataset.near_far_from_sphere(rays_o, rays_d)
             render_out = self.renderer.render_density(
-                rays_d, reflect, near, far, alpha=self.alpha
+                rays_o, rays_d, reflect, near, far, alpha=self.alpha
             )
 
             if require_contain('img_list', 'wrp_viz'):
