@@ -35,6 +35,14 @@ class Evaluator:
         self.calib_para = None
         self.visualizer = None
 
+    def convert_to_depth(self, out_path):
+        for ply_file in tqdm(list(out_path.rglob('*.ply')), desc='mesh2depth'):
+            depth_file = ply_file.parent / 'depth.png'
+            if self.flush_flag or not depth_file.exists():
+                self.visualizer.set_mesh(ply_file)
+                self.visualizer.get_depth(depth_file)
+        pass
+
     def evaluate_sequence(self, scene_name):
         work_sheet = self.workbook[scene_name]
         data_path = Path(work_sheet['B1'].value)
@@ -49,6 +57,7 @@ class Evaluator:
             img_intrin=plb.str2tuple(self.calib_para['img_intrin'], item_type=float),
             pos=[-50.0, 50.0, 50.0],
         )
+        self.convert_to_depth(out_path)
 
         # Get all exp_tags
         start_row = 5
@@ -68,25 +77,22 @@ class Evaluator:
         total_row = current_row
 
         # Evaluate: column = 4,5,6,7
-        for row_idx in tqdm(range(start_row, total_row), desc=scene_name):
+        for row_idx in tqdm(range(start_row, total_row)):
             depth_gt, depth_est, mask_gt = cmp_sets[row_idx - start_row]
+            exp_tag = work_sheet.cell(row_idx, 1).value
             epoch_dir = Path(work_sheet.cell(row_idx, 2).value)
+            self.visualizer.set_depth(depth_est, mask_gt)
 
-            if not depth_est.exists():
-                self.visualizer.set_mesh(epoch_dir / 'mesh.ply')
-                self.visualizer.get_depth(depth_est)
-            else:
-                self.visualizer.set_depth(depth_est, mask_gt)
+            # Check if depth2pcd or vis is needed.
+            if not (epoch_dir / 'pcd.asc').exists() or not (epoch_dir / 'vis.png').exists():
+                self.visualizer.update()
 
-            self.visualizer.update()
+                if not (epoch_dir / 'pcd.asc').exists():
+                    self.visualizer.get_pcd(epoch_dir / 'pcd.asc')
 
-            # Check if depth2pcd is needed.
-            if not (epoch_dir / 'pcd.asc').exists():
-                self.visualizer.get_pcd(epoch_dir / 'pcd.asc')
-
-            # Check if depth vis is needed.
-            if not (epoch_dir / 'vis.png').exists():
-                self.visualizer.get_view(epoch_dir / 'vis.png')
+                # Check if depth vis is needed.
+                if not (epoch_dir / 'vis.png').exists():
+                    self.visualizer.get_view(epoch_dir / 'vis.png')
 
             # Evaluate here.
             res, diff, mask = self._evaluate_exp_outs(cmp_sets[row_idx - start_row])
@@ -331,7 +337,7 @@ def main():
         workbook='C:/SLDataSet/SLNeRF/result.xlsx',
         flush_flag=False,
     )
-    app.evaluate_sequence('scene_00')
+    app.evaluate_sequence('scene_06')
     # app.sum_average('NonRigidReal')
 
 

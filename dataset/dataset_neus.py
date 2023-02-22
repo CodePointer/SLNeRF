@@ -62,6 +62,7 @@ class MultiPatDataset(torch.utils.data.Dataset):
         self.object_bbox_min = np.array([-1.01, -1.01, -1.01, 1.0])
         self.object_bbox_max = np.array([ 1.01,  1.01,  1.01, 1.0])
         z_min, z_max = 500.0, 1500.0
+        self.z_range = (z_min, z_max)
         fx, fy, dx, dy = self.intrinsics.cpu().numpy()
         hei_set, wid_set = torch.where(self.mask_occ[0] > 0)
         w_min, w_max = wid_set.min().item(), wid_set.max().item()

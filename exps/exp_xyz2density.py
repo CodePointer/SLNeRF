@@ -8,14 +8,15 @@ import torch.nn.functional as F
 import numpy as np
 from configparser import ConfigParser
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 from worker.worker import Worker
 import pointerlib as plb
-from dataset.multi_pat_dataset import MultiPatDataset
+from dataset.dataset_neus import MultiPatDataset
 
 from loss.loss_func import SuperviseDistLoss, NeighborGradientLossWithEdge, PeakEncourageLoss
 from networks.layers import WarpFromXyz, PatternSampler
-from networks.neus.renderer import NeuSLRenderer, DensityNetwork, ReflectNetwork
+from networks.neural_density import NeuSLRenderer, DensityNetwork, ReflectNetwork
 
 
 # - Coding Part - #
@@ -60,15 +61,15 @@ class ExpXyz2DensityWorker(Worker):
         config = ConfigParser()
         config.read(str(self.train_dir / 'config.ini'), encoding='utf-8')
 
-        pat_idx_set = [int(x.strip()) for x in self.args.pat_set.split(',')]
-        ref_img_set = [int(x.strip()) for x in self.args.reflect_set.split(',')]
-        self.focus_len = plb.str2array(config['Calibration']['img_intrin'], np.float32)[0]
+        pat_idx_set = [x.strip() for x in self.args.pat_set.split(',')]
+        ref_img_set = [x.strip() for x in self.args.reflect_set.split(',')]
+        self.focus_len = plb.str2array(config['RawCalib']['img_intrin'], np.float32)[0]
         self.pat_dataset = MultiPatDataset(
             scene_folder=self.train_dir,
             pat_idx_set=pat_idx_set,
             ref_img_set=ref_img_set,
             sample_num=self.sample_num,
-            calib_para=config['Calibration'],
+            calib_para=config['RawCalib'],
             device=self.device
         )
         self.train_dataset = self.pat_dataset
@@ -77,11 +78,6 @@ class ExpXyz2DensityWorker(Worker):
         if self.args.exp_type == 'eval':
             self.test_dataset.append(self.pat_dataset)
 
-        self.res_writers = []
-        if self.args.save_stone > 0:
-            self.res_writers.append(self.create_res_writers())
-
-        self.bound = self.pat_dataset.get_bound()
         self.logging(f'--train_dir: {self.train_dir}')
 
     def init_networks(self):
@@ -96,7 +92,7 @@ class ExpXyz2DensityWorker(Worker):
             d_hidden=256,
             n_layers=8,
             skip_in=[4],
-            multires=self.args.multires,  # TODO: Origin=6
+            multires=self.args.multires,  # 6
             bias=0.5,
             scale=1.0,
             geometric_init=True,
@@ -105,9 +101,9 @@ class ExpXyz2DensityWorker(Worker):
         config = ConfigParser()
         config.read(str(self.train_dir / 'config.ini'), encoding='utf-8')
         warp_layer = WarpFromXyz(
-            calib_para=config['Calibration'],
+            calib_para=config['RawCalib'],
             pat_mat=self.pat_dataset.pat_set,
-            bound=self.bound,
+            scale_mat=self.pat_dataset.get_scale_mat(),
             device=self.device
         )
         self.renderer = NeuSLRenderer(
@@ -117,11 +113,10 @@ class ExpXyz2DensityWorker(Worker):
             n_samples=64,
             n_importance=64,
             up_sample_steps=4,
-            perturb=1.0,
-            bound=self.bound
+            perturb=1.0
         )
-        self.logging(f'--networks: {",".join(self.networks.keys())}')
-        self.logging(f'--networks-static: {",".join(self.network_static_list)}')
+        self.logging(f'Networks: {",".join(self.networks.keys())}')
+        self.logging(f'Networks-static: {",".join(self.network_static_list)}')
 
     def init_losses(self):
         """
@@ -132,7 +127,7 @@ class ExpXyz2DensityWorker(Worker):
         self.super_loss = SuperviseDistLoss(dist='l1')
         self.loss_funcs['color_l1'] = self.super_loss
         self.loss_funcs['color_1pt_l1'] = self.super_loss
-        self.logging(f'--loss types: {self.loss_funcs.keys()}')
+        self.logging(f'Loss types: {self.loss_funcs.keys()}')
         pass
 
     def data_process(self, idx, data):
@@ -150,7 +145,14 @@ class ExpXyz2DensityWorker(Worker):
             The output will be passed to :loss_forward().
         """
         alpha_val = self.alpha if self.args.ablation_tag != 'ours-samp' else None
-        render_out = self.renderer.render_density(data['rays_v'], reflect=data['reflect'], alpha=alpha_val)
+        near, far = self.pat_dataset.near_far_from_sphere(data['rays_o'], data['rays_v'])
+        render_out = self.renderer.render_density(
+            rays_d=data['rays_v'],
+            reflect=data['reflect'],
+            near=near,
+            far=far,
+            alpha=alpha_val
+        )
         return render_out
 
     def loss_forward(self, net_out, data):
@@ -179,13 +181,11 @@ class ExpXyz2DensityWorker(Worker):
                 break
             self.warp_lambda = lambda_value
 
-    def callback_save_res(self, data, net_out, dataset, res_writer):
+    def check_save_res(self, epoch):
         """
-            The callback function for data saving.
-            The data should be saved with the input.
-            Please create new folders and save result.
+            Rewrite the report.
         """
-        pass
+        return False
 
     def check_realtime_report(self, **kwargs):
         """
@@ -199,13 +199,7 @@ class ExpXyz2DensityWorker(Worker):
             Modified this function can control the report strategy during training and testing.
             (Additional)
         """
-        epoch = kwargs['epoch']
-        if self.args.debug_mode:
-            return True
-        if epoch % self.args.img_stone == 0:
-            return True
         return False
-        # return super().check_img_visual(**kwargs)
 
     def callback_epoch_report(self, epoch, tag, stopwatch, res_writer=None):
         total_loss = self.avg_meters['Total'].get_epoch()
@@ -222,25 +216,52 @@ class ExpXyz2DensityWorker(Worker):
             if self.history_best[0] is None or self.history_best[0] > total_loss:
                 self.history_best = [total_loss, True]
 
-        # Save
-        if self.args.save_stone > 0 and epoch % self.args.save_stone == 0:
-            res = self.visualize_output(resolution_level=1, require_item=[
-                'img_list', 'wrp_viz', 'depth_viz', 'depth_map', 'point_cloud'
-            ])  # TODO: 可视化所有的query部分，用于绘制结果图。
-            save_folder = self.res_dir / 'output' / f'e_{epoch:05}'
-            save_folder.mkdir(parents=True, exist_ok=True)
-            plb.imsave(save_folder / f'wrp_viz.png', res['wrp_viz'])
-            plb.imsave(save_folder / f'{self.args.run_tag}_viz.png', res['depth_viz'])
-            plb.imsave(save_folder / f'{self.args.run_tag}.png', res['depth_map'], scale=10.0, img_type=np.uint16)
-            np.savetxt(str(save_folder / f'{self.args.run_tag}.asc'), res['point_cloud'],
-                       fmt='%.2f', delimiter=',', newline='\n', encoding='utf-8')
-            img_folder = save_folder / 'img'
-            for i, img in enumerate(res['img_list']):
-                plb.imsave(img_folder / f'img_{i}.png', img, mkdir=True)
+        # For image
+        if self.args.debug_mode or (self.args.img_stone > 0 and epoch % self.args.img_stone == 0):
+            self.callback_img_visual(None, None, tag, epoch)
 
-        pass
+        # For save
+        if self.args.save_stone > 0 and epoch % self.args.save_stone == 0:
+            self.callback_save_res(epoch, None, None, self.pat_dataset)
 
         self.loss_writer.flush()
+
+    def callback_img_visual(self, data, net_out, tag, step):
+        """
+            The callback function for visualization.
+            Notice that the loss will be automatically report and record to writer.
+            For image visualization, some custom code is needed.
+            Please write image to loss_writer and call flush().
+        """
+        res = self.visualize_output(resolution_level=4, require_item=['wrp_viz', 'depth_viz', 'mesh'])
+        self.loss_writer.add_image(f'{tag}/img_render', res['wrp_viz'], step)
+        self.loss_writer.add_image(f'{tag}/depth_map', res['depth_viz'], step)
+        vertices, triangles = res['mesh']
+        self.loss_writer.add_mesh(f'{tag}/mesh', vertices=vertices, faces=triangles, global_step=step)
+        self.loss_writer.flush()
+
+    def callback_save_res(self, epoch, data, net_out, dataset):
+        """
+            The callback function for data saving.
+            The data should be saved with the input.
+            Please create new folders and save result.
+        """
+        # Save
+        res = self.visualize_output(resolution_level=1, require_item=[
+            'img_list', 'wrp_viz', 'depth_viz', 'depth_map', 'point_cloud'
+        ])
+        save_folder = self.res_dir / 'output' / f'e_{epoch:05}'
+        save_folder.mkdir(parents=True, exist_ok=True)
+        plb.imsave(save_folder / f'wrp_viz.png', res['wrp_viz'])
+        plb.imsave(save_folder / f'depth_viz.png', res['depth_viz'])
+        plb.imsave(save_folder / f'depth.png', res['depth_map'], scale=10.0, img_type=np.uint16)
+        np.savetxt(str(save_folder / f'pcd.asc'), res['point_cloud'],
+                   fmt='%.2f', delimiter=',', newline='\n', encoding='utf-8')
+        img_folder = save_folder / 'img'
+        for i, img in enumerate(res['img_list']):
+            plb.imsave(img_folder / f'img_{i}.png', img, mkdir=True)
+
+        pass
 
     def visualize_output(self, resolution_level, require_item=None):
         if require_item is None:
@@ -270,9 +291,13 @@ class ExpXyz2DensityWorker(Worker):
             return flag
 
         # image, depth_map, point_cloud
-        rays_o, rays_d, img_size, mask_val, reflect = self.pat_dataset.get_uniform_ray(resolution_level=resolution_level)
+        rays_o, rays_d, reflect, mask_val = self.pat_dataset.gen_uniform_ray(resolution_level=resolution_level)
+        img_hei, img_wid = rays_o.shape[-2:]
+        rays_o = rays_o.reshape(rays_o.shape[0], -1).permute(1, 0)
+        rays_d = rays_d.reshape(rays_d.shape[0], -1).permute(1, 0)
+        reflect = reflect.reshape(reflect.shape[0], -1).permute(1, 0)
+        mask_val = mask_val.reshape(-1)
 
-        img_hei, img_wid = img_size
         total_ray = rays_o.shape[0]
         idx = torch.arange(0, total_ray, dtype=torch.long)
         idx = idx[mask_val > 0.0]
@@ -280,10 +305,9 @@ class ExpXyz2DensityWorker(Worker):
         rays_d = rays_d[mask_val > 0.0]
         reflect = reflect[mask_val > 0.0]
 
-        pch_num = self.pat_dataset.get_pch_len() ** 2
-        rays_o_set = rays_o.split(self.sample_num * pch_num)
-        rays_d_set = rays_d.split(self.sample_num * pch_num)
-        reflect_set = reflect.split(self.sample_num * pch_num)
+        rays_o_set = rays_o.split(self.sample_num)
+        rays_d_set = rays_d.split(self.sample_num)
+        reflect_set = reflect.split(self.sample_num)
         out_rgb_fine = []
         out_rgb_1pt = []
         out_reflectance = []
@@ -293,8 +317,13 @@ class ExpXyz2DensityWorker(Worker):
         out_pts = []
         out_color = []
         out_density = []
+        pbar = tqdm(total=len(rays_o_set), desc=f'Vis-Resolution={resolution_level}')
         for rays_o, rays_d, reflect in zip(rays_o_set, rays_d_set, reflect_set):
-            render_out = self.renderer.render_density(rays_d, alpha=self.alpha, reflect=reflect)
+            pbar.update(1)
+            near, far = self.pat_dataset.near_far_from_sphere(rays_o, rays_d)
+            render_out = self.renderer.render_density(
+                rays_d, reflect, near, far, alpha=self.alpha
+            )
 
             if require_contain('img_list', 'wrp_viz'):
                 color_fine = render_out['color']  # [N, C]
@@ -324,6 +353,7 @@ class ExpXyz2DensityWorker(Worker):
 
             if require_contain('query_weights'):
                 out_weights.append(render_out['weights'].detach().cpu())
+        pbar.close()
 
         res = {}
         if require_contain('img_list', 'wrp_viz'):
@@ -352,10 +382,9 @@ class ExpXyz2DensityWorker(Worker):
 
             if require_contain('wrp_viz'):
                 img_gt_list = []
-                img_input = self.pat_dataset.img_set.unsqueeze(0).detach().cpu()
-                img_input_re = torch.nn.functional.interpolate(img_input, scale_factor=1 / resolution_level).squeeze(dim=0)
+                img_gt_set = self.pat_dataset.get_cut_img(resolution_level)
                 for c in range(channel):
-                    img_gt = img_input_re[c]
+                    img_gt = img_gt_set[c].detach().cpu()
                     img_viz = pvf.img_visual(img_gt)
                     img_gt_list.append(img_viz)
                 wrp_viz = pvf.img_concat(img_warp_list + img_render_list + img_gt_list, 3, channel, transpose=False)
@@ -369,11 +398,11 @@ class ExpXyz2DensityWorker(Worker):
             if require_contain('depth_map'):
                 res['depth_map'] = depth_map
             if require_contain('depth_viz'):
-                depth_viz = pvf.disp_visual(depth_map, range_val=self.bound[:, 2].to(depth_map.device))
+                depth_viz = pvf.disp_visual(depth_map, range_val=self.pat_dataset.z_range)
                 res['depth_viz'] = depth_viz
             if require_contain('point_cloud', 'mesh'):
                 # TODO: DepthMapVisual + mask
-                visualizer = plb.DepthMapVisual(depth_map.unsqueeze(0), focus=self.focus_len / resolution_level)
+                visualizer = plb.DepthMapConverter(depth_map.unsqueeze(0), focus=self.focus_len / resolution_level)
                 if require_contain('point_cloud'):
                     res['point_cloud'] = visualizer.to_xyz_set()
                 if require_contain('mesh'):
@@ -410,17 +439,3 @@ class ExpXyz2DensityWorker(Worker):
             res['query_weights'] = weight_map
 
         return res
-
-    def callback_img_visual(self, data, net_out, tag, step):
-        """
-            The callback function for visualization.
-            Notice that the loss will be automatically report and record to writer.
-            For image visualization, some custom code is needed.
-            Please write image to loss_writer and call flush().
-        """
-        res = self.visualize_output(resolution_level=4, require_item=['wrp_viz', 'depth_viz', 'mesh'])
-        self.loss_writer.add_image(f'{tag}/img_render', res['wrp_viz'], step)
-        self.loss_writer.add_image(f'{tag}/depth_map', res['depth_viz'], step)
-        vertices, triangles = res['mesh']
-        self.loss_writer.add_mesh(f'{tag}/mesh', vertices=vertices, faces=triangles, global_step=step)
-        self.loss_writer.flush()
