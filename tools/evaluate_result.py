@@ -336,7 +336,7 @@ def main():
 
     app = Evaluator(
         workbook='C:/SLDataSet/SLNeRF/result.xlsx',
-        flush_flag=True,
+        flush_flag=False,
     )
     app.evaluate_sequence('scene_00')
     # app.sum_average('NonRigidReal')

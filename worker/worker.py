@@ -231,7 +231,7 @@ class Worker:
             self.callback_after_test(epoch_num)
 
             # Save model
-            if self.args.exp_type in ['train'] and epoch_num % self.args.model_stone == 0:
+            if self.args.exp_type in ['train'] and self.args.model_stone > 0 and epoch_num % self.args.model_stone == 0:
                 self._net_save(epoch_num)
 
     def data_process(self, idx, data):

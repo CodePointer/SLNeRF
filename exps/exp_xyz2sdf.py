@@ -49,6 +49,11 @@ class ExpXyz2SdfWorker(Worker):
         # self.super_loss = None
         self.igr_weight = 0.1
         self.mask_weight = 0.1
+        self.lambda_set = []
+        for pair_str in args.lambda_stone.split(','):
+            epoch_idx, value = pair_str.split('-')
+            self.lambda_set.append([int(epoch_idx), float(value)])
+        self.warp_lambda = 1.0
 
         self.anneal_ratio = 1.0
         self.anneal_end = 0
@@ -79,7 +84,7 @@ class ExpXyz2SdfWorker(Worker):
         if self.args.exp_type == 'eval':
             self.test_dataset.append(self.pat_dataset)
 
-        self.logging(f'--train_dir: {self.train_dir}')
+        self.logging(f'Train_dir: {self.train_dir}')
 
     def init_networks(self):
         """
@@ -127,6 +132,7 @@ class ExpXyz2SdfWorker(Worker):
         self.loss_funcs['color_fine'] = SuperviseDistLoss(dist='l1')
         self.loss_funcs['eikonal'] = NaiveLoss()
         self.loss_funcs['mask_loss'] = SuperviseBCEMaskLoss()
+        self.loss_funcs['warp_loss'] = SuperviseDistLoss(dist='l1')
         self.logging(f'Loss types: {self.loss_funcs.keys()}')
         pass
 
@@ -209,12 +215,23 @@ class ExpXyz2SdfWorker(Worker):
         )
         total_loss += mask_loss * self.mask_weight
 
+        # warp_loss
+        warp_loss = self.loss_record(
+            'warp_loss', pred=net_out['color_1pt'],
+            target=data['color'], mask=data['mask']
+        )
+        total_loss += warp_loss * self.warp_lambda
+
         self.avg_meters['Total'].update(total_loss, self.N)
         return total_loss
 
     def callback_after_train(self, epoch):
         # anneal_ratio
         # self.anneal_ratio = np.min([1.0, epoch / self.anneal_end])
+        for lambda_epoch, lambda_value in self.lambda_set:
+            if lambda_epoch > epoch:
+                break
+            self.warp_lambda = lambda_value
         pass
 
     def check_save_res(self, epoch):
@@ -288,6 +305,7 @@ class ExpXyz2SdfWorker(Worker):
         res = self.visualize_output(resolution_level=1, require_item=['img_gen', 'norm', 'mesh'])
         save_folder = self.res_dir / 'output' / f'e_{epoch:05}'
         save_folder.mkdir(parents=True, exist_ok=True)
+        plb.imsave(save_folder / 'wrp_viz.png', res['img_gen'])
         img_folder = save_folder / 'img'
         for i, img in enumerate(res['render_list']):
             plb.imsave(img_folder / f'img_{i}.png', img, mkdir=True)
@@ -331,6 +349,7 @@ class ExpXyz2SdfWorker(Worker):
             mask_set = mask.split(self.sample_num)
 
             out_rgb_fine = []
+            out_rgb_1pt = []
             out_norm = []
             pbar = tqdm(total=len(rays_o_set), desc=f'Vis-Resolution={resolution_level}')
             for rays_o, rays_v, reflect in zip(rays_o_set, rays_v_set, reflect_set):
@@ -341,6 +360,7 @@ class ExpXyz2SdfWorker(Worker):
                     cos_anneal_ratio=self.anneal_ratio
                 )
                 out_rgb_fine.append(render_out['color_fine'].detach().cpu())
+                out_rgb_1pt.append(render_out['color_1pt'].detach().cpu())
                 n_samples = self.renderer.n_samples + self.renderer.n_importance
                 normals = render_out['gradients'] * render_out['weights'][:, :n_samples, None]
                 normals = normals * render_out['inside_sphere'][..., None]
@@ -357,6 +377,14 @@ class ExpXyz2SdfWorker(Worker):
                     img_viz = pvf.img_visual(img_fine[c])
                     img_render_list.append(img_viz)
 
+            img_warp_list = []
+            if len(out_rgb_1pt) > 0:
+                img_1pt = torch.cat(out_rgb_1pt, dim=0).permute(1, 0)  # [C, N]
+                img_1pt = img_1pt.reshape(-1, hei, wid)
+                for c in range(img_1pt.shape[0]):
+                    img_viz = pvf.img_visual(img_1pt[c])
+                    img_warp_list.append(img_viz)
+
             img_gt_list = []
             img_gt_set = self.pat_dataset.get_cut_img(resolution_level)
             for c in range(img_gt_set.shape[0]):
@@ -369,7 +397,8 @@ class ExpXyz2SdfWorker(Worker):
                 normal_img_uni = (normal_img + 1.0) / 2.0
                 res['norm'] = normal_img_uni
 
-            wrp_viz = pvf.img_concat(img_render_list + img_gt_list, 2, len(img_render_list), transpose=False)
+            wrp_viz = pvf.img_concat(img_warp_list + img_render_list + img_gt_list,
+                                     3, len(img_render_list), transpose=False)
             res['render_list'] = img_render_list
             res['img_gen'] = wrp_viz
 

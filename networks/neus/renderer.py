@@ -275,6 +275,11 @@ class NeuSRenderer:
                                             dim=-1) - 1.0) ** 2
         gradient_error = (relax_inside_sphere * gradient_error).sum() / (relax_inside_sphere.sum() + 1e-5)
 
+        # MOD: For warping loss
+        pts_mat = pts.reshape(*weights.shape[:2], 3)
+        pts_sum = (pts_mat * weights[:, :, None]).sum(dim=1)
+        color_1pt = reflect[:, :1] * color_network(pts_sum) + reflect[:, 1:]
+
         return {
             'color': color,
             'sdf': sdf,
@@ -285,7 +290,9 @@ class NeuSRenderer:
             'weights': weights,
             'cdf': c.reshape(batch_size, n_samples),
             'gradient_error': gradient_error,
-            'inside_sphere': inside_sphere
+            'inside_sphere': inside_sphere,
+            'color_1pt': color_1pt,
+            'pts_sum': pts_sum,
         }
 
     def render(self, 
@@ -382,13 +389,16 @@ class NeuSRenderer:
         return {
             'color_fine': color_fine,
             's_val': s_val,
+            'sdf': ret_fine['sdf'],
             'cdf_fine': ret_fine['cdf'],
             'weight_sum': weights_sum,
             'weight_max': torch.max(weights, dim=-1, keepdim=True)[0],
             'gradients': gradients,
             'weights': weights,
             'gradient_error': ret_fine['gradient_error'],
-            'inside_sphere': ret_fine['inside_sphere']
+            'inside_sphere': ret_fine['inside_sphere'],
+            'color_1pt': ret_fine['color_1pt'],
+            'pts_sum': ret_fine['pts_sum'],
         }
 
     def extract_geometry(self, bound_min, bound_max, resolution, threshold=0.0):
