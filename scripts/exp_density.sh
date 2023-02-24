@@ -1,5 +1,5 @@
-TRAIN_DIR="/media/qiao/Videos/SLDataSet/SLNeuS/1_Collected0218"
-OUT_DIR=${DATA_DIR}"-out"
+TRAIN_DIR="/media/qiao/Videos/SLDataSet/SLNeuS/1_Collected0218/scene_00"
+OUT_DIR="/media/qiao/Videos/SLDataSet/SLNeuS/1_Collected0218-out/scene_00"
 
 #for (( i=0; i<=11; i++ ))
 #do
