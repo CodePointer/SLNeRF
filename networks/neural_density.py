@@ -501,8 +501,14 @@ class NeuSLRenderer:
         # Render core
         batch_size, n_samples = z_vals.shape  # [N, C]
 
+        # Section length
+        dists = z_vals[..., 1:] - z_vals[..., :-1]
+        dists = torch.cat([dists, torch.Tensor([sample_dist]).expand(dists[..., :1].shape).to(dists.device)], -1)
+        mid_z_vals = z_vals + dists * 0.5
+
         # Section midpoints
-        pts = rays_o[:, None, :] + rays_d[:, None, :] * z_vals[..., :, None]  # n_rays, n_samples, 3
+        pts = rays_o[:, None, :] + rays_d[:, None, :] * mid_z_vals[..., :, None]  # n_rays, n_samples, 3
+
         density, features = self.sdf_network(pts.reshape(-1, 3))
         density = density.reshape(z_vals.shape)
 
@@ -517,7 +523,6 @@ class NeuSLRenderer:
         # Compute depth
         pts_sum = (pts * weights[:, :, None]).sum(dim=1)
         color_1pt = reflect[:, :1] * self.color_network(pts_sum) + reflect[:, 1:]
-        depth_val = pts_sum[:, -1:]
 
         return {
             'pts': pts,

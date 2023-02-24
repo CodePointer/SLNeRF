@@ -14,7 +14,7 @@ class MultiPatDataset(torch.utils.data.Dataset):
         self.scene_folder = scene_folder
         self.pat_folder = scene_folder / 'pat'
         self.img_folder = scene_folder / 'img'
-        self.depth_folder = scene_folder / 'depth'
+        # self.depth_folder = scene_folder / 'gt'
 
         # Get pattern num
         self.pat_num = len(pat_idx_set)
@@ -23,6 +23,7 @@ class MultiPatDataset(torch.utils.data.Dataset):
         self.intrinsics = plb.a2t(self.intrinsics).to(device)
         self.img_size = plb.str2tuple(calib_para['img_size'], item_type=int)
         self.img_size = (self.img_size[1], self.img_size[0])
+        self.z_range = plb.str2tuple(calib_para['z_range'], float)
 
         # 读取img，pat，根据pat_idx_set。把它们stack到一起。
         img_list, pat_list = [], []
@@ -33,7 +34,7 @@ class MultiPatDataset(torch.utils.data.Dataset):
             pat_list.append(pat)
         self.img_set = torch.cat(img_list, dim=0)  # [C, H, W]
         self.pat_set = torch.cat(pat_list, dim=0)  # [C, H, W]
-        # self.depth = plb.imload(self.depth_folder / 'depth_0.png', scale=10.0)  # [1, H, W]
+        # self.depth = plb.imload(self.depth_folder / 'depth.png', scale=10.0)  # [1, H, W]
 
         # 读取reflect_set
         reflect_list = [plb.imload(self.img_folder / f'img_{idx}.png') for idx in ref_img_set]
@@ -48,10 +49,10 @@ class MultiPatDataset(torch.utils.data.Dataset):
             self.mask_occ = plb.imload(scene_folder / 'gt' / 'mask_occ.png').to(torch.float32)
         
         # To device
-        self.img_set = self.img_set.to(device)  # [C, H, W]
-        self.pat_set = self.pat_set.to(device)  # [C, H, W]
-        self.ref_set = self.ref_set.to(device)  # [2, H, W]
-        self.mask_occ = self.mask_occ.to(device) # [1, H, W]
+        self.img_set = self.img_set.to(device)    # [C, H, W]
+        self.pat_set = self.pat_set.to(device)    # [C, H, W]
+        self.ref_set = self.ref_set.to(device)    # [2, H, W]
+        self.mask_occ = self.mask_occ.to(device)  # [1, H, W]
 
         # For efficiency: hei, wid range
         hei_set, wid_set = torch.where(self.mask_occ[0] > 0)
@@ -61,8 +62,7 @@ class MultiPatDataset(torch.utils.data.Dataset):
         # Other parameters from NeuS
         self.object_bbox_min = np.array([-1.01, -1.01, -1.01, 1.0])
         self.object_bbox_max = np.array([ 1.01,  1.01,  1.01, 1.0])
-        z_min, z_max = 500.0, 1500.0
-        self.z_range = (z_min, z_max)
+        z_min, z_max = self.z_range
         fx, fy, dx, dy = self.intrinsics.cpu().numpy()
         hei_set, wid_set = torch.where(self.mask_occ[0] > 0)
         w_min, w_max = wid_set.min().item(), wid_set.max().item()
@@ -110,10 +110,12 @@ class MultiPatDataset(torch.utils.data.Dataset):
 
         reflect = self.ref_set[:, pixels_y.long(), pixels_x.long()]  # 2, W, H
         mask = self.mask_occ[:, pixels_y.long(), pixels_x.long()]  # 2, W, H
+        # depth = self.depth[:, pixels_y.long(), pixels_x.long()]  # 2, W, H
 
         res = [x.to(self.device) for x in[
             rays_o.permute(2, 1, 0), rays_v.permute(2, 1, 0),
-            reflect.permute(0, 2, 1), mask.permute(0, 2, 1)
+            reflect.permute(0, 2, 1), mask.permute(0, 2, 1),
+            # depth.permute(0, 2, 1),
         ]]
 
         return res
@@ -131,6 +133,7 @@ class MultiPatDataset(torch.utils.data.Dataset):
         color = self.img_set[:, pixels_y, pixels_x].permute(1, 0)    # batch_size, 3
         mask = self.mask_occ[:, pixels_y, pixels_x].permute(1, 0)      # batch_size, 1
         ref = self.ref_set[:, pixels_y, pixels_x].permute(1, 0)     # MOD: batch_size, 2
+        # depth = self.depth[:, pixels_y, pixels_x].permute(1, 0)
         p = torch.stack([pixels_x, pixels_y, torch.ones_like(pixels_y)], dim=-1).float().to(self.device)  # batch_size, 3
         p = torch.matmul(self.intrinsics_inv[:, :3, :3], p[:, :, None]).squeeze() # batch_size, 3
         rays_v = p / torch.linalg.norm(p, ord=2, dim=-1, keepdim=True)    # batch_size, 3
@@ -138,7 +141,7 @@ class MultiPatDataset(torch.utils.data.Dataset):
         
         # MOD：Return value
         res = [x.to(self.device) for x in [
-            rays_v, color, mask, ref
+            rays_v, color, mask, ref,  # depth
         ]]
         return res
 

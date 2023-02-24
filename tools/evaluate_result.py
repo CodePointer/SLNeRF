@@ -84,21 +84,21 @@ class Evaluator:
             self.visualizer.set_depth(depth_est, mask_gt)
 
             # Check if depth2pcd or vis is needed.
-            if not (epoch_dir / 'pcd.asc').exists() or not (epoch_dir / 'vis.png').exists():
+            if self.flush_flag or not (epoch_dir / 'pcd.asc').exists() or not (epoch_dir / 'vis.png').exists():
                 self.visualizer.update()
 
-                if not (epoch_dir / 'pcd.asc').exists():
+                if self.flush_flag or not (epoch_dir / 'pcd.asc').exists():
                     self.visualizer.get_pcd(epoch_dir / 'pcd.asc')
 
                 # Check if depth vis is needed.
-                if not (epoch_dir / 'vis.png').exists():
+                if self.flush_flag or not (epoch_dir / 'vis.png').exists():
                     self.visualizer.get_view(epoch_dir / 'vis.png')
 
             # Evaluate here.
             res, diff, mask = self._evaluate_exp_outs(cmp_sets[row_idx - start_row])
 
             # Check if step vis is needed.
-            if not (epoch_dir / 'step_vis.png').exists():
+            if self.flush_flag or not (epoch_dir / 'step_vis.png').exists():
                 step_vis = self._draw_step_vis(diff, mask)
                 plb.imsave(epoch_dir / 'step_vis.png', step_vis)
 
@@ -114,7 +114,7 @@ class Evaluator:
     def _build_up_cmp_set(self, data_path, out_path):
         # cmp_set = []
 
-        depth_gt_file = data_path / 'gt' / 'depth_gt.png'
+        depth_gt_file = data_path / 'gt' / 'depth.png'
         mask_gt_file = data_path / 'gt' / 'mask_occ.png'
         depth_res_file = out_path / 'depth.png'
 
@@ -123,9 +123,10 @@ class Evaluator:
     def _evaluate_exp_outs(self, cmp_set):
 
         depth_gt, depth_res, mask_gt = cmp_set
-        depth_gt = plb.imload(depth_gt, scale=1e2)
-        depth_res = plb.imload(depth_res, scale=1e2)
-        mask_gt = plb.imload(mask_gt)
+        depth_gt = plb.imload(depth_gt, scale=10.0)
+        depth_res = plb.imload(depth_res, scale=10.0)
+        # mask_gt = plb.imload(mask_gt)
+        mask_gt = (depth_gt > 0.0).float()
 
         diff = (depth_gt - depth_res)
         diff_vec = diff[mask_gt > 0.0]
@@ -335,9 +336,9 @@ def main():
 
     app = Evaluator(
         workbook='C:/SLDataSet/SLNeRF/result.xlsx',
-        flush_flag=False,
+        flush_flag=True,
     )
-    app.evaluate_sequence('scene_06')
+    app.evaluate_sequence('scene_00')
     # app.sum_average('NonRigidReal')
 
 

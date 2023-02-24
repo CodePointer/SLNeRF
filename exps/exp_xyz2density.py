@@ -369,7 +369,7 @@ class ExpXyz2DensityWorker(Worker):
             img_all.scatter_(1, idx.reshape(1, -1).repeat(channel, 1), img_set)
             img_render_list = []
             for c in range(channel):
-                img_fine = img_all[c].reshape(img_wid, img_hei).permute(1, 0)
+                img_fine = img_all[c].reshape(img_hei, img_wid)
                 img_viz = pvf.img_visual(img_fine)
                 img_render_list.append(img_viz)
 
@@ -379,7 +379,7 @@ class ExpXyz2DensityWorker(Worker):
             img_all.scatter_(1, idx.reshape(1, -1).repeat(channel, 1), img_set)
             img_warp_list = []
             for c in range(channel):
-                img_fine = img_all[c].reshape(img_wid, img_hei).permute(1, 0)
+                img_fine = img_all[c].reshape(img_hei, img_wid)
                 img_viz = pvf.img_visual(img_fine)
                 img_warp_list.append(img_viz)
 
@@ -400,7 +400,7 @@ class ExpXyz2DensityWorker(Worker):
             depth_set = torch.cat(out_depth, dim=0).reshape(-1)
             depth_all = torch.zeros([total_ray], dtype=depth_set.dtype).to(depth_set.device)
             depth_all.scatter_(0, idx, depth_set)
-            depth_map = depth_all.reshape(img_wid, img_hei).permute(1, 0)
+            depth_map = depth_all.reshape(img_hei, img_wid)
             if require_contain('depth_map'):
                 res['depth_map'] = depth_map
             if require_contain('depth_viz'):
@@ -419,7 +419,7 @@ class ExpXyz2DensityWorker(Worker):
             n_sample = z_set.shape[1]
             z_all = torch.zeros([total_ray, n_sample], dtype=z_set.dtype).to(z_set.device)
             z_all.scatter_(0, idx.reshape(-1, 1).repeat(1, n_sample), z_set)
-            z_map = z_all.reshape(img_wid, img_hei, n_sample).permute(1, 0, 2)
+            z_map = z_all.reshape(img_hei, img_wid, n_sample)
             res['query_z'] = z_map
 
         if require_contain('query_points'):
@@ -427,21 +427,21 @@ class ExpXyz2DensityWorker(Worker):
             n_sample = pts_set.shape[1]
             pts_all = torch.zeros([total_ray, n_sample, 3], dtype=pts_set.dtype).to(pts_set.device)
             pts_all.scatter_(0, idx.reshape(-1, 1, 1).repeat(1, n_sample, 3), pts_set)
-            pts_map = pts_all.reshape(img_wid, img_hei, n_sample, 3).permute(1, 0, 2, 3)
+            pts_map = pts_all.reshape(img_hei, img_wid, n_sample, 3)
             res['query_points'] = pts_map
         if require_contain('query_density'):
             density_set = torch.cat(out_density, dim=0)  # [N, n_sample]
             n_sample = density_set.shape[1]
             density_all = torch.zeros([total_ray, n_sample], dtype=density_set.dtype).to(density_set.device)
             density_all.scatter_(0, idx.reshape(-1, 1).repeat(1, n_sample), density_set)
-            density_map = density_all.reshape(img_wid, img_hei, n_sample).permute(1, 0, 2)
+            density_map = density_all.reshape(img_hei, img_wid, n_sample)
             res['query_density'] = density_map
         if require_contain('query_weights'):
             weight_set = torch.cat(out_weights, dim=0)
             n_sample = weight_set.shape[1]
             weight_all = torch.zeros([total_ray, n_sample], dtype=weight_set.dtype).to(weight_set.device)
             weight_all.scatter_(0, idx.reshape(-1, 1).repeat(1, n_sample), weight_set)
-            weight_map = weight_all.reshape(img_wid, img_hei, n_sample).permute(1, 0, 2)
+            weight_map = weight_all.reshape(img_hei, img_wid, n_sample)
             res['query_weights'] = weight_map
 
         return res
