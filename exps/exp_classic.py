@@ -66,7 +66,7 @@ class ExpClassicWorker:
             kwargs['pat_sub'] = tag2img('pm70n3i0', 'pm70n3i1', 'pm70n3i2')
 
         elif self.args.argset == 'ClassicGCC':
-            gc_digit = 3
+            gc_digit = 4
             self.coder = GCCPMPCoder(hei, wid, gc_digit)
             wave_length = int(self.coder.pmp_coder.wave_length)
             kwargs['gray_pats'] = tag2img(*[f'gc{i}' for i in range(gc_digit)])
