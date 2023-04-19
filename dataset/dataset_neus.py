@@ -41,6 +41,11 @@ class MultiPatDataset(torch.utils.data.Dataset):
         reflect_list[0] -= reflect_list[1]
         self.ref_set = torch.cat(reflect_list, dim=0)  # [2, H, W]
 
+        # Improvement:
+        # ref_white, _ = self.img_set.max(dim=0)
+        # ref_black = torch.zeros_like(ref_white)
+        # self.ref_set = torch.stack([ref_white, ref_black], dim=0)
+
         self.device = device
 
         # Get coord candidate

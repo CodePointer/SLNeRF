@@ -263,3 +263,35 @@ class SingleVarianceNetwork(nn.Module):
 
     def forward(self, x):
         return torch.ones([len(x), 1]).to(self.variance.device) * torch.exp(self.variance * 10.0)
+
+
+class SDFNetworkFree(SDFNetwork):
+    def __init__(self, **kwargs):
+        super(SDFNetworkFree, self).__init__(**kwargs)
+        self.free_ch_start = self.dims[0]
+
+    def set_free_scale(self, scale=1.0):
+        scale = max(min(scale, 1.0), 0.0)
+        self.free_ch_start = int(self.dims[0] * scale)
+
+    def forward(self, inputs):
+        inputs = inputs * self.scale
+        if self.embed_fn_fine is not None:
+            inputs = self.embed_fn_fine(inputs)
+
+        x = inputs
+
+        x[self.free_ch_start:] = 0.0
+
+        for l in range(0, self.num_layers - 1):
+            lin = getattr(self, "lin" + str(l))
+
+            if l in self.skip_in:
+                x = torch.cat([x, inputs], 1) / np.sqrt(2)
+
+            x = lin(x)
+
+            if l < self.num_layers - 2:
+                x = self.activation(x)
+
+        return x / self.scale

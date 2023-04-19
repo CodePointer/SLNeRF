@@ -127,6 +127,11 @@ def get_args():
                         help='multires in embedder.',
                         default=6,
                         type=int)
+    parser.add_argument('--sigma_anneal_end',
+                        help='For sigma annealing during patch-based training. 0 for no annealing.'
+                             + ' The sigma range is written in the code. This only tuning the speed.',
+                        default=0,
+                        type=int)
 
     args = parser.parse_args()
     return args

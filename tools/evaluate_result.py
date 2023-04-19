@@ -28,19 +28,35 @@ import pointerlib as plb
 
 # - Coding Part - #
 class Evaluator:
-    def __init__(self, workbook, flush_flag):
+    def __init__(self, workbook, flush_flag, pre_process_flag=False):
         self.workbook = openpyxl.load_workbook(str(workbook))
         self.workbook_path = workbook
         self.flush_flag = flush_flag
+        self.pre_process_flag = pre_process_flag
         self.calib_para = None
         self.visualizer = None
 
     def convert_to_depth(self, out_path):
         for ply_file in tqdm(list(out_path.rglob('*.ply')), desc='mesh2depth'):
             depth_file = ply_file.parent / 'depth.png'
-            if self.flush_flag or not depth_file.exists():
-                self.visualizer.set_mesh(ply_file)
-                self.visualizer.get_depth(depth_file)
+            self.visualizer.set_mesh(ply_file)
+            self.visualizer.get_depth(depth_file)
+        pass
+
+    def flush_depth_est_shape(self, cmp_set):
+        depth_gt_file, depth_res_file, mask_gt_file = cmp_set
+        depth_gt = plb.imload(depth_gt_file, scale=10.0)
+        depth_res = plb.imload(depth_res_file, scale=10.0)
+
+        if depth_res.shape[-2] != depth_gt.shape[-2] or depth_res.shape[-1] != depth_gt.shape[-1]:
+            mask = plb.imload(mask_gt_file)
+            h_src, w_src = map(lambda x: x.min().item(), torch.where(mask[0] > 0))
+            h_end, w_end = map(lambda x: x.max().item(), torch.where(mask[0] > 0))
+            depth_res_re = torch.zeros_like(depth_gt)
+            depth_res_re[:, h_src:h_end, w_src:w_end] = depth_res
+            depth_res = depth_res_re
+            plb.imsave(depth_res_file, depth_res, scale=10.0, img_type=np.uint16)
+
         pass
 
     def evaluate_sequence(self, scene_name):
@@ -57,7 +73,8 @@ class Evaluator:
             img_intrin=plb.str2tuple(self.calib_para['img_intrin'], item_type=float),
             pos=[-50.0, 50.0, 50.0],
         )
-        self.convert_to_depth(out_path)
+        if self.pre_process_flag:
+            self.convert_to_depth(out_path)
 
         # Get all exp_tags
         start_row = 5
@@ -72,9 +89,14 @@ class Evaluator:
                 work_sheet.cell(current_row, 1).value = exp_path.name
                 work_sheet.cell(current_row, 2).value = str(epoch_folder)
                 work_sheet.cell(current_row, 3).value = int(epoch_folder.name.split('_')[1])
-                cmp_sets.append(self._build_up_cmp_set(data_path, epoch_folder))
+                cmp_set = self._build_up_cmp_set(data_path, epoch_folder)
+                if self.pre_process_flag:
+                    self.flush_depth_est_shape(cmp_set)
+                cmp_sets.append(cmp_set)
                 current_row += 1
         total_row = current_row
+        # if self.pre_process_flag:
+        #     map(self.flush_depth_est_shape, cmp_sets)
 
         # Evaluate: column = 4,5,6,7
         for row_idx in tqdm(range(start_row, total_row)):
@@ -337,6 +359,7 @@ def main():
     app = Evaluator(
         workbook='C:/SLDataSet/SLNeRF/result.xlsx',
         flush_flag=False,
+        pre_process_flag=False,
     )
     app.evaluate_sequence('scene_00')
     # app.sum_average('NonRigidReal')

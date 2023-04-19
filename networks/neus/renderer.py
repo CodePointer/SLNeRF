@@ -90,45 +90,6 @@ class NeuSRenderer:
         self.up_sample_steps = up_sample_steps
         self.perturb = perturb
 
-    # def render_core_outside(self, rays_o, rays_d, z_vals, sample_dist, nerf, background_rgb=None):
-    #     """
-    #     Render background
-    #     """
-    #     batch_size, n_samples = z_vals.shape
-
-    #     # Section length
-    #     dists = z_vals[..., 1:] - z_vals[..., :-1]
-    #     dists = torch.cat([dists, torch.Tensor([sample_dist]).expand(dists[..., :1].shape)], -1)
-    #     mid_z_vals = z_vals + dists * 0.5
-
-    #     # Section midpoints
-    #     pts = rays_o[:, None, :] + rays_d[:, None, :] * mid_z_vals[..., :, None]  # batch_size, n_samples, 3
-
-    #     dis_to_center = torch.linalg.norm(pts, ord=2, dim=-1, keepdim=True).clip(1.0, 1e10)
-    #     pts = torch.cat([pts / dis_to_center, 1.0 / dis_to_center], dim=-1)       # batch_size, n_samples, 4
-
-    #     dirs = rays_d[:, None, :].expand(batch_size, n_samples, 3)
-
-    #     pts = pts.reshape(-1, 3 + int(self.n_outside > 0))
-    #     dirs = dirs.reshape(-1, 3)
-
-    #     density, sampled_color = nerf(pts, dirs)
-    #     sampled_color = torch.sigmoid(sampled_color)
-    #     alpha = 1.0 - torch.exp(-F.softplus(density.reshape(batch_size, n_samples)) * dists)
-    #     alpha = alpha.reshape(batch_size, n_samples)
-    #     weights = alpha * torch.cumprod(torch.cat([torch.ones([batch_size, 1]), 1. - alpha + 1e-7], -1), -1)[:, :-1]
-    #     sampled_color = sampled_color.reshape(batch_size, n_samples, 3)
-    #     color = (weights[:, :, None] * sampled_color).sum(dim=1)
-    #     if background_rgb is not None:
-    #         color = color + background_rgb * (1.0 - weights.sum(dim=-1, keepdim=True))
-
-    #     return {
-    #         'color': color,
-    #         'sampled_color': sampled_color,
-    #         'alpha': alpha,
-    #         'weights': weights,
-    #     }
-
     def up_sample(self, rays_o, rays_d, z_vals, sdf, n_importance, inv_s):
         """
         Up sampling give a fixed inv_s

@@ -56,6 +56,53 @@ class SuperviseBCEMaskLoss(BaseLoss):
         return val
 
 
+class SuperviseLCNLoss(BaseLoss):
+    def __init__(self, name='SuperviseLCNLoss', dist='l1'):
+        super().__init__(name)
+        if dist == 'l1':
+            self.crit = torch.nn.L1Loss(reduction='none')
+        elif dist == 'l2':
+            self.crit = torch.nn.MSELoss(reduction='none')
+        elif dist == 'smoothl1':
+            self.crit = torch.nn.SmoothL1Loss(reduction='none')
+        else:
+            raise NotImplementedError(f'Unknown loss type: {dist}')
+
+    def forward(self, pred, target, mask):
+        """
+        :param pred:        [N, C * pch_num]
+        :param target:      [N, C * pch_num]
+        :param mask:        [N, pch_num]
+        :return:
+        """
+        eps = 1e-6
+        batch, pch_num = mask.shape
+        ch = pred.shape[1] // mask.shape[1]
+        assert pred.shape[1] == mask.shape[1] * ch
+
+        pred = pred.reshape(batch, ch, pch_num)
+        target = target.reshape(batch, ch, pch_num)
+        if mask is None:
+            mask = torch.ones_like(pred[:, :1, :])
+        mask = mask.reshape(batch, 1, pch_num)
+
+        def compute(input_patch):
+            avg = input_patch.mean(dim=2, keepdim=True)
+            diff = (input_patch - avg)
+            std2 = (diff ** 2).mean(dim=2, keepdim=True)
+            std = torch.sqrt(std2)
+            lcn = (input_patch - avg) / (std + eps)
+            return lcn, avg, std
+
+        pred_lcn, _, _ = compute(pred)
+        target_lcn, _, target_std = compute(target)
+        mask = mask * target_std
+
+        err_map = self.crit(pred, target)  # [N, C, pch_num]
+        val = (err_map * mask).sum() / (mask.sum() + 1e-8)
+        return val, mask.reshape(batch, pch_num)
+
+
 class NeighborGradientLoss(BaseLoss):
     def __init__(self, rad, name='NeighborGradientLoss', dist='l2'):
         super().__init__(name)
