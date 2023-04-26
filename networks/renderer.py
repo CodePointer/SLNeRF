@@ -70,7 +70,7 @@ class NeuSRendererPatch(NeuSRenderer):
             #       pts_nbr = pts_o + t * v_vec
             #       t = (pts_cen - pts_o) * n_vec / v_vec * n_vec
             # Dimension: [batch_num, n_samples, dim (3), pch_len^2].
-            n_vec = gradients.reshape(batch_size, n_samples, 3, 1)
+            n_vec = gradients.reshape(batch_size, n_samples, 3, 1).detach()
             pts_cen = pts.reshape(batch_size, n_samples, 3, 1)
             pts_o = rays_o.reshape(batch_size, 1, 3, 1)
             v_vec = rays_d_patch.reshape(batch_size, 1, 3, -1)
@@ -168,7 +168,6 @@ class NeuSRendererPatch(NeuSRenderer):
             with torch.no_grad():
                 pts = rays_o[:, None, :] + rays_d[:, None, :] * z_vals[..., :, None]
                 sdf = self.sdf_network.sdf(pts.reshape(-1, 3)).reshape(batch_size, self.n_samples)
-
                 for i in range(self.up_sample_steps):
                     new_z_vals = self.up_sample(rays_o,
                                                 rays_d,

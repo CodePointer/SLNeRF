@@ -260,8 +260,9 @@ class PatchLCNDataset(torch.utils.data.Dataset):
         # Get mask
         self.mat_set['mask'] = torch.zeros([1, self.img_size[1], self.img_size[0]], dtype=torch.float)
         self.mat_set['mask'][:, rad:-rad, rad:-rad] = 1.0
-        if (scene_folder / 'mask' / 'mask_occ.png').exists():
-            self.mat_set['mask'] *= plb.imload(scene_folder / 'mask' / 'mask_occ.png')
+        if (scene_folder / 'gt' / 'mask_occ.png').exists():
+            self.mat_set['mask'] *= plb.imload(scene_folder / 'gt' / 'mask_occ.png')
+        self.valid_coord = torch.stack(torch.where(self.mat_set['mask'][0] > 0), dim=0)
 
         self.patch_set = {key: mat2patch(self.mat_set[key], self.rad) for key in ['img', 'mask']}
 
@@ -345,12 +346,15 @@ class PatchLCNDataset(torch.utils.data.Dataset):
         """
         Generate random rays at world space from one camera.
         """
-        pixels_x = torch.randint(low=self.wid_range[0],
-                                 high=self.wid_range[1],
-                                 size=[self.sample_num])
-        pixels_y = torch.randint(low=self.hei_range[0],
-                                 high=self.hei_range[1],
-                                 size=[self.sample_num])
+        coord_idx = torch.randint(low=0, high=self.valid_coord.shape[1], size=[self.sample_num])
+        pixels_y = self.valid_coord[0, coord_idx]
+        pixels_x = self.valid_coord[1, coord_idx]
+        # pixels_x = torch.randint(low=self.wid_range[0],
+        #                          high=self.wid_range[1],
+        #                          size=[self.sample_num])
+        # pixels_y = torch.randint(low=self.hei_range[0],
+        #                          high=self.hei_range[1],
+        #                          size=[self.sample_num])
 
         color = self.mat_set['img'][:, pixels_y, pixels_x].permute(1, 0)  # [batch_size, C]
         mask = self.mat_set['mask'][:, pixels_y, pixels_x].permute(1, 0)  # [batch_size, 1]
@@ -408,7 +412,8 @@ class PatchLCNDataset(torch.utils.data.Dataset):
         dist = torch.sqrt(xx.float() ** 2 + yy.float() ** 2)
         gaussian_val = torch.exp(- dist ** 2 / sigma ** 2)
 
-        kernel = gaussian_val / gaussian_val.sum()
+        # kernel = gaussian_val / gaussian_val.sum()   This may cause numerical problems.
+        kernel = gaussian_val
         return kernel.reshape(1, -1)  # [1, pch_len ** 2]
 
     def pixel2ray(self, pixels_x, pixels_y):
