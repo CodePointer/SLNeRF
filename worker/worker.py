@@ -383,6 +383,10 @@ class Worker:
 
             with self.stopwatch.record('backward'):
                 err.backward()
+            # # Check nan
+            # nan_list = [x.grad.isnan().any() for x in self.networks['SDFNetwork'].parameters()]
+            # if torch.stack(nan_list).any():
+            #     raise AssertionError(f'NaN found in SDF for epoch {epoch}: {nan_list}')
 
             with self.stopwatch.record('optimizer'):
                 self.optimizer.step()
