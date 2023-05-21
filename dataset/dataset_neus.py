@@ -37,7 +37,13 @@ class MultiPatDataset(torch.utils.data.Dataset):
         # self.depth = plb.imload(self.depth_folder / 'depth.png', scale=10.0)  # [1, H, W]
 
         # 读取reflect_set
-        reflect_list = [plb.imload(self.img_folder / f'img_{idx}.png') for idx in ref_img_set]
+        if len(ref_img_set) == 1 and ref_img_set[0] == '':
+            reflect_list = [
+                torch.max(self.img_set, dim=0),
+                torch.min(self.img_set, dim=0)
+            ]
+        else:
+            reflect_list = [plb.imload(self.img_folder / f'img_{idx}.png') for idx in ref_img_set]
         reflect_list[0] -= reflect_list[1]
         self.ref_set = torch.cat(reflect_list, dim=0)  # [2, H, W]
 
