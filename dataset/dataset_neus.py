@@ -39,8 +39,8 @@ class MultiPatDataset(torch.utils.data.Dataset):
         # 读取reflect_set
         if len(ref_img_set) == 1 and ref_img_set[0] == '':
             reflect_list = [
-                torch.max(self.img_set, dim=0),
-                torch.min(self.img_set, dim=0)
+                torch.max(self.img_set, dim=0, keepdim=True)[0],
+                torch.min(self.img_set, dim=0, keepdim=True)[0]
             ]
         else:
             reflect_list = [plb.imload(self.img_folder / f'img_{idx}.png') for idx in ref_img_set]
