@@ -1,27 +1,31 @@
-DATA_DIR="/media/qiao/Videos/SLDataSet/SLNeuS/3_Dataset0408"
+DATA_DIR="/media/qiao/Videos/SLDataSet/SLNeuS/5_Dataset0509"
 TRAIN_DIR=${DATA_DIR}"/scene_"${2}
 OUT_DIR=${DATA_DIR}"-out/scene_"${2}
-PAT_SET_LIST=(
-    "rdot0"
-    "rletter0"
-)
-RUN_TAG_LIST=(
-    "rdot0"
-    "rletter0"
-)
 # PAT_SET_LIST=(
-#     "rdot0,rdot1,rdot2,rdot3,rdot4,rdot5"
-#     "rdot0,rdot1,rdot2,rdot3,rdot4"
-#     "rdot0,rdot1,rdot2,rdot3"
-#     "rdot0,rdot1,rdot2"
-#     "rdot0,rdot1"
+#     "rarray0"
+#     "gc3,gc4,gc5"
 # )
 # RUN_TAG_LIST=(
+#     "rarray0"
+#     "gc3,gc4,gc5"
+# )
+PAT_SET_LIST=(
+    "rarray0,rarray1,rarray2,rarray3,rarray4,rarray5"
+    "rarray0,rarray1,rarray2"
+)
+RUN_TAG_LIST=(
+    "rarray012345"
+    "rarray012"
+)
+# PAT_SET_LIST=(
+#     "gc3,gc4,gc5"
+#     "rdot0,rdot1,rdot2,rdot3,rdot4,rdot5"
+#     "rdot0,rdot1,rdot2"
+# )
+# RUN_TAG_LIST=(
+#     "gc345"
 #     "rdot012345"
-#     "rdot01234"
-#     "rdot0123"
 #     "rdot012"
-#     "rodt01"
 # )
 # PAT_SET_LIST=(
 #     "rletter0,rletter1,rletter2,rletter3,rletter4,rletter5"
@@ -52,6 +56,7 @@ do
         --out_dir ${OUT_DIR} \
         --epoch_start 0 \
         --pat_set ${PAT_SET} \
-        --run_tag ${RUN_TAG}
+        --reflect_set "" \
+        --run_tag ${RUN_TAG}"ref"
 
 done

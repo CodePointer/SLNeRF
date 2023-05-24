@@ -155,6 +155,8 @@ class ExpXyz2SdfOneShotWorker(Worker):
 
     def get_sig_anneal_ratio(self):
         # [0.0, 1.0] -> [10.0, 1.0]
+        return 8.0  # Fix anneal ratio.
+
         if self.args.sigma_anneal_end == 0:
             return 1.0
         else:

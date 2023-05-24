@@ -1,14 +1,38 @@
-DATA_DIR="/media/qiao/Videos/SLDataSet/SLNeuS/3_Dataset0408"
+DATA_DIR="/media/qiao/Videos/SLDataSet/SLNeuS/5_Dataset0509"
 TRAIN_DIR=${DATA_DIR}"/scene_"${2}
 OUT_DIR=${DATA_DIR}"-out/scene_"${2}
 PAT_SET_LIST=(
-    "rdot0"
-    "rletter0"
+    "rarray0"
+    "rarray1"
+    "rarray2"
+    "rarray3"
+    "rarray4"
+    "rarray5"
 )
 RUN_TAG_LIST=(
-    "rdot0"
-    "rletter0"
+    "rarray0"
+    "rarray1"
+    "rarray2"
+    "rarray3"
+    "rarray4"
+    "rarray5"
 )
+# PAT_SET_LIST=(
+#     "rdot0"
+#     "rdot1"
+#     "rdot2"
+#     "rdot3"
+#     "rdot4"
+#     "rdot5"
+# )
+# RUN_TAG_LIST=(
+#     "rdot0"
+#     "rdot1"
+#     "rdot2"
+#     "rdot3"
+#     "rdot4"
+#     "rdot5"
+# )
 
 echo "Exp num: "${#PAT_SET_LIST[*]}" on CUDA "${1}", scene_"${2}
 
