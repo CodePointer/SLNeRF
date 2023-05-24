@@ -47,11 +47,6 @@ class MultiPatDataset(torch.utils.data.Dataset):
         reflect_list[0] -= reflect_list[1]
         self.ref_set = torch.cat(reflect_list, dim=0)  # [2, H, W]
 
-        # Improvement:
-        # ref_white, _ = self.img_set.max(dim=0)
-        # ref_black = torch.zeros_like(ref_white)
-        # self.ref_set = torch.stack([ref_white, ref_black], dim=0)
-
         self.device = device
 
         # Get coord candidate
@@ -192,3 +187,25 @@ class MultiPatDataset(torch.utils.data.Dataset):
             # 'pat': self.pat_set,                        # [C, Hp, Wp]
         }
         return ret
+
+
+class MultiPatPatchDataset(MultiPatDataset):
+    """Only change pattern into patch-based version."""
+    def __init__(self, scene_folder, pat_idx_set, ref_img_set, sample_num, calib_para, device, rad=7):
+        super().__init__(scene_folder, pat_idx_set, ref_img_set, sample_num, calib_para, device)
+
+        # self.pat_set -> patch-based version
+        self.rad = 7
+        side_len = 2 * self.rad + 1
+        c, h, w = self.pat_set.shape
+        res = torch.nn.functional.unfold(self.pat_set.reshape(c, 1, h, w).float(),
+                                         (side_len, side_len),
+                                         padding=self.rad)
+        self.pat_set = res.reshape(-1, h, w)
+        pass
+
+    def get_pch_num(self):
+        return (2 * self.rad + 1) ** 2
+
+    def get_pch_rad(self):
+        return self.rad

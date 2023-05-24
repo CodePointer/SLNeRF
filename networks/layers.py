@@ -135,15 +135,3 @@ class WarpFromXyz(torch.nn.Module):
         #     sample_mat *= mask
 
         return sample_mat.squeeze(axis=3)[0].permute(1, 0)  # [N, C]
-
-
-class PatternSampler(torch.nn.Module):
-    def __init__(self, warp_layer):
-        super().__init__()
-        self.warp_layer = warp_layer
-
-    def forward(self, points, reflects):
-        point_color = self.warp_layer(points)
-        # ref = reflects[:, :1]
-        # bck = reflects[:, 1:]
-        # return ref * point_color + bck

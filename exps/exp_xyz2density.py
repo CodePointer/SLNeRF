@@ -15,7 +15,7 @@ import pointerlib as plb
 from dataset.dataset_neus import MultiPatDataset
 
 from loss.loss_func import SuperviseDistLoss, NeighborGradientLossWithEdge, PeakEncourageLoss
-from networks.layers import WarpFromXyz, PatternSampler
+from networks.layers import WarpFromXyz
 from networks.neural_density import NeuSLRenderer, DensityNetwork, ReflectNetwork
 
 
