@@ -39,8 +39,11 @@ class Evaluator:
     def convert_to_depth(self, out_path):
         for ply_file in tqdm(list(out_path.rglob('*.ply')), desc='mesh2depth'):
             depth_file = ply_file.parent / 'depth.png'
-            self.visualizer.set_mesh(ply_file)
-            self.visualizer.get_depth(depth_file)
+            if depth_file.exists() and not self.flush_flag:
+                continue
+            else:
+                self.visualizer.set_mesh(ply_file)
+                self.visualizer.get_depth(depth_file)
         pass
 
     def flush_depth_est_shape(self, cmp_set):
@@ -104,6 +107,8 @@ class Evaluator:
             exp_tag = work_sheet.cell(row_idx, 1).value
             epoch_dir = Path(work_sheet.cell(row_idx, 2).value)
             self.visualizer.set_depth(depth_est, mask_gt)
+            if self.visualizer.depth.max() < 5.0:
+                self.visualizer.depth[:, :] = 700.0
 
             # Check if depth2pcd or vis is needed.
             if self.flush_flag or not (epoch_dir / 'pcd.asc').exists() or not (epoch_dir / 'vis.png').exists():
@@ -210,12 +215,12 @@ class Evaluator:
         return depth, img
 
     def _depth2pcd(self, depth_file, mask_file):
-        fx, fy, dx, dy = plb.str2tuple(self.calib_para['img_intrin'], item_type=float)
-        depth_map = plb.imload(depth_file, scale=10.0, flag_tensor=False)
-        mask = plb.imload(mask_file, flag_tensor=False)
-        depth_viz = plb.DepthMapVisual(depth_map, (fx + fy) / 2.0, mask)
-        xyz_set = depth_viz.to_xyz_set()
-        xyz_set = xyz_set[mask.reshape(-1) == 1.0]
+        img_intrin = plb.str2tuple(self.calib_para['img_intrin'], item_type=float)
+        img_size = plb.str2tuple(self.calib_para['img_size'], int)
+        depth_viz = plb.DepthVisualizer(img_size, img_intrin)
+        depth_viz.set_depth(depth_file, mask_file)
+        depth_viz.update()
+        xyz_set = depth_viz.get_pcd()
         xyz_set = xyz_set[xyz_set[:, -1] > 10.0, :]
         return xyz_set
 
@@ -315,6 +320,68 @@ class Evaluator:
         pass
 
 
+def mesh_color_visualize(depth, mask, config, img_list, out_folder):
+    """Given the depth and projected image, generate view with color."""
+
+    def safe_load(file_path, *args, **kwargs):
+        if isinstance(file_path, Path) or isinstance(file_path, str):
+            return plb.imload(file_path, *args, **kwargs)
+        else:
+            return file_path
+
+    depth = safe_load(depth, 10.0, flag_tensor=False)
+    mask = safe_load(mask, flag_tensor=False)
+    for i in range(len(img_list)):
+        img_list[i] = safe_load(img_list[i], flag_tensor=False)
+    cfg = ConfigParser()
+    cfg.read(str(config), encoding='utf-8')
+    img_size = plb.str2tuple(cfg['RawCalib']['img_size'], item_type=int)
+    img_intrin = plb.str2tuple(cfg['RawCalib']['img_intrin'], item_type=float)
+    pos = [-50.0, 50.0, 50.0]
+
+    # depth -> pcd & color
+    wid, hei = img_size
+    fx, fy, dx, dy = img_intrin
+    hh = np.arange(0, hei).reshape(-1, 1).repeat(wid, axis=1)
+    ww = np.arange(0, wid).reshape(1, -1).repeat(hei, axis=0)
+    xyz_mat = np.stack([
+        (ww - dx) / fx,
+        (hh - dy) / fy,
+        np.ones_like(ww)
+    ], axis=0) * depth[None]  # [3, H, W]
+    xyz_set = xyz_mat.reshape(3, -1).transpose()    # [H * W, 3]
+    pcd = xyz_set[mask.reshape(-1) > 0.0, :]        # [N, 3]
+
+    color_set = []
+    for img in img_list:
+        if len(img.shape) == 2:
+            img = np.stack([img] * 3, axis=0)
+        img_vec = img.reshape(img.shape[0], -1).transpose()
+        color_set.append(img_vec[mask.reshape(-1) > 0.0, :])  # [N, 3]
+
+    view_set = []
+    with plb.MyO3DVisualizer(img_size, img_intrin, pos, True) as v:
+        for color_vec in color_set:
+            pcd_o3d = o3d.geometry.PointCloud()
+            pcd_o3d.points = o3d.utility.Vector3dVector(pcd)
+            pcd_o3d.estimate_normals(
+                search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=30.0, max_nn=30)
+            )
+            pcd_o3d.colors = o3d.utility.Vector3dVector(color_vec)
+            v.vis.add_geometry(pcd_o3d)
+            v.flush_pos()
+            v.update()
+            view_set.append(v.get_screen())
+            v.vis.remove_geometry(pcd_o3d)
+        time.sleep(1)
+
+    out_folder.mkdir(exist_ok=True, parents=True)
+    for i, view in enumerate(view_set):
+        plb.imsave(out_folder / f'vis_{i}.png', view)
+
+    pass
+
+
 def export_text_to_file(workbook, params):
     # 顺序的几个
     sheet_names = ['scene_00', 'scene_01', 'scene_02', 'scene_03']
@@ -357,11 +424,23 @@ def export_text_to_file(workbook, params):
 def main():
 
     app = Evaluator(
-        workbook='C:/SLDataSet/SLNeRF/result.xlsx',
+        workbook='C:/SLDataSet/SLNeRF/result_3DV.xlsx',
         flush_flag=False,
-        pre_process_flag=False,
+        pre_process_flag=True,
     )
-    app.evaluate_sequence('scene_00')
+    app.evaluate_sequence('0531_scene_00')
+
+    # data_path = Path('C:/SLDataSet/SLNeRF/7_Dataset0531/scene_00')
+    # out_path = Path('C:/SLDataSet/SLNeRF/7_Dataset0531-out/scene_00')
+    # res_path = out_path / 'xyz2sdf-gc012345wrp' / 'output' / 'e_50000'
+    # mesh_color_visualize(
+    #     depth=res_path / 'depth.png',
+    #     mask=data_path / 'gt' / 'mask_occ.png',
+    #     config=data_path / 'config.ini',
+    #     img_list=[data_path / 'img' / f'img_gc{x}.png' for x in ['2', '3', '4', '5']],
+    #     out_folder=res_path / 'view_vis',
+    # )
+
     # app.sum_average('NonRigidReal')
 
 

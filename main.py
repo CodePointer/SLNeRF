@@ -32,6 +32,7 @@ def main():
     args = get_args()
     post_process(args)
 
+    # TODO: Check if exists
     worker = get_worker(args)
     worker.init_all()
     worker.do()

@@ -138,6 +138,9 @@ def get_args():
                         help='Used for gray code based methods.',
                         default=0,
                         type=int)
+    parser.add_argument('--interpolation',
+                        help='Interpolate gray code or not',
+                        action='store_true')
 
     args = parser.parse_args()
     return args
