@@ -1,29 +1,41 @@
-DATA_DIR="/media/qiao/Videos/SLDataSet/SLNeuS/6_Dataset0523"
+DATA_DIR="/media/qiao/Videos/SLDataSet/SLNeuS/7_Dataset0531"
 TRAIN_DIR=${DATA_DIR}"/scene_"${2}
 OUT_DIR=${DATA_DIR}"-out/scene_"${2}
 # PAT_SET_LIST=(
-#     "gc0,gc1,gc2,gc3,gc4,gc5,gc6,gc7,gc8,gc9"
-#     "gc0,gc1,gc2,gc3,gc4,gc5,gc6,gc7"
-#     "gc0,gc1,gc2,gc3,gc4,gc5"
-#     "gc0,gc1,gc2,gc3"
+#     "rarray0"
+#     "gc3,gc4,gc5"
 # )
 # RUN_TAG_LIST=(
-#     "gc0123456789"
-#     "gc01234567"
-#     "gc012345"
-#     "gc0123"
+#     "rarray0"
+#     "gc3,gc4,gc5"
+# )
+# PAT_SET_LIST=(
+#     "arr10r5,arr10r4,arr10r3,arr10r2,arr10r1,arr10r0"
+#     "arr10r2,arr10r1,arr10r0"
+#     "arr10r2,arr10r2inv,arr10r1,arr10r1inv,arr10r0,arr10r0inv"
+#     "arr20r5,arr20r4,arr20r3,arr20r2,arr20r1,arr20r0"
+#     "arr20r2,arr20r1,arr20r0"
+# )
+# RUN_TAG_LIST=(
+#     "arr10r543210"
+#     "arr10r210"
+#     "arr10r210inv"
+#     "arr20r543210"
+#     "arr20r210"
+# )
+# PAT_SET_LIST=(
+#     "arr10r5,arr10r5inv,arr10r4,arr10r4inv,arr10r3,arr10r3inv,arr10r2,arr10r2inv,arr10r1,arr10r1inv,arr10r0,arr10r0inv"
+#     "arr20r5,arr20r5inv,arr20r4,arr20r4inv,arr20r3,arr20r3inv,arr20r2,arr20r2inv,arr20r1,arr20r1inv,arr20r0,arr20r0inv"
+# )
+# RUN_TAG_LIST=(
+#     "arr10r543210inv"
+#     "arr20r543210inv"
 # )
 PAT_SET_LIST=(
-    "gc0,gc1,gc2"
-    "gc0,gc1,gc2,gc3,gc4,gc5,gc6,gc7,gc8"
-    "gc0,gc1,gc2,gc3,gc4,gc5,gc6"
-    "gc0,gc1,gc2,gc3,gc4"
+    "arr20r2,arr20r2inv,arr20r1,arr20r1inv,arr20r0,arr20r0inv"
 )
 RUN_TAG_LIST=(
-    "gc012"
-    "gc012345678"
-    "gc0123456"
-    "gc01234"
+    "arr20r210inv"
 )
 
 echo "Exp num: "${#PAT_SET_LIST[*]}" on CUDA "${1}", scene_"${2}
@@ -40,7 +52,7 @@ do
         --out_dir ${OUT_DIR} \
         --lambda_stone 0-0.0 \
         --epoch_start 0 \
-        --reflect_set uni255,uni0 \
+        --reflect_set "" \
         --pat_set ${PAT_SET} \
         --run_tag ${RUN_TAG}
 
@@ -50,7 +62,7 @@ do
         --out_dir ${OUT_DIR} \
         --model_dir ${OUT_DIR}"/xyz2sdf-"${RUN_TAG}"/model" \
         --epoch_start 25001 \
-        --reflect_set uni255,uni0 \
+        --reflect_set "" \
         --pat_set ${PAT_SET} \
         --run_tag ${RUN_TAG}"wrp"
 

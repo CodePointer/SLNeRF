@@ -189,23 +189,134 @@ class MultiPatDataset(torch.utils.data.Dataset):
         return ret
 
 
-class MultiPatPatchDataset(MultiPatDataset):
-    """Only change pattern into patch-based version."""
-    def __init__(self, scene_folder, pat_idx_set, ref_img_set, sample_num, calib_para, device, rad=7):
-        super().__init__(scene_folder, pat_idx_set, ref_img_set, sample_num, calib_para, device)
+def apply_4x4mat(xyz_src, matrix):
+    """
+        xyz_src: [N, 3] or [H, W, 3]
+        matrix: [4, 4]
+    """
+    xyz_src_ex = xyz_src.reshape(-1, 3)  # -> [N, 3]
+    xyz_src_ex = torch.cat([xyz_src_ex, torch.ones_like(xyz_src_ex[:, :1])], dim=1)  # [N, 4]
+    xyz_dst_ex = torch.matmul(
+        matrix.expand(xyz_src_ex.shape[0], 4, 4).to(xyz_src.device),
+        xyz_src_ex.view(-1, 4, 1)
+    )  # [N, 4, 1]
+    xyz_dst = xyz_dst_ex[:, :3, 0] / xyz_dst_ex[:, 3:, 0]  # [N, 3]
+    return xyz_dst.reshape(*xyz_src.shape)
 
-        # self.pat_set -> patch-based version
-        self.rad = 7
-        side_len = 2 * self.rad + 1
-        c, h, w = self.pat_set.shape
-        res = torch.nn.functional.unfold(self.pat_set.reshape(c, 1, h, w).float(),
-                                         (side_len, side_len),
-                                         padding=self.rad)
-        self.pat_set = res.reshape(-1, h, w)
-        pass
 
-    def get_pch_num(self):
-        return (2 * self.rad + 1) ** 2
+class MultiPatDatasetUni(MultiPatDataset):
+    """Load image & pattern for one depth map"""
+    def __init__(self, scene_folder, pat_idx_set, ref_img_set, sample_num, calib_para, device):
+        super().__init__(
+            scene_folder, pat_idx_set, ref_img_set, sample_num, calib_para, device
+        )
 
-    def get_pch_rad(self):
-        return self.rad
+        # c2w, w2c
+        fx, fy, dx, dy = plb.str2tuple(calib_para['img_intrin'], float)
+        h_min, h_max = self.hei_range
+        w_min, w_max = self.wid_range
+        z_min, z_max = self.z_range
+        n, f = z_min, z_max
+        l = (w_min - dx) / fx * n
+        r = (w_max - dx) / fx * n
+        t = (h_min - dy) / fy * n
+        b = (h_max - dy) / fy * n
+        c2w = np.array([
+            [2 * n / (r - l), 0.0, - (r + l) / (r - l), 0.0],
+            [0.0, 2 * n / (b - t), - (b + t) / (b - t), 0.0],
+            [0.0, 0.0, (f + n) / (f - n), - 2 * n * f / (f - n)],
+            [0.0, 0.0, 1.0, 0.0],
+        ], dtype=np.float32)
+        self.c2w = torch.from_numpy(c2w)
+        self.w2c = torch.inverse(self.c2w)
+
+        # positions
+        hei, wid = self.img_size
+        i, j = np.meshgrid(
+            np.arange(wid, dtype=np.float32),
+            np.arange(hei, dtype=np.float32)
+        )
+        i, j = torch.from_numpy(i), torch.from_numpy(j)
+        positions = torch.stack([
+            (i - dx) / fx, 
+            (j - dy) / fy, 
+            torch.ones_like(i)
+        ], -1) * (z_min - 10.0) # (H, W, 3)
+        self.positions = apply_4x4mat(positions.view(-1, 3), self.c2w).view(positions.shape)
+        self.direction = torch.Tensor([0.0, 0.0, 1.0]).to(self.device)
+
+        self.iter_times = 1
+
+    def __len__(self):
+        return self.iter_times
+
+    def gen_uniform_ray(self, resolution_level=1):
+        l = resolution_level
+        wid = self.wid_range[1] - self.wid_range[0]
+        hei = self.hei_range[1] - self.hei_range[0]
+        tx = torch.linspace(self.wid_range[0], self.wid_range[1], wid // l)
+        ty = torch.linspace(self.hei_range[0], self.hei_range[1], hei // l)
+        y, x = torch.meshgrid(ty, tx)
+        y = y.reshape(-1).long()
+        x = x.reshape(-1).long()
+        hei, wid = ty.shape[0], tx.shape[0]
+
+        rays_o = self.positions[y, x].to(self.device).permute(1, 0).view(3, hei, wid)
+        rays_v = self.direction.view(3, 1, 1).expand(rays_o.shape)
+        reflect = self.ref_set[:, y, x].view(-1, hei, wid)  # 2, H, W
+        mask = self.mask_occ[:, y, x].view(-1, hei, wid)  # 2, H, W
+
+        res = [x.to(self.device) for x in[
+            rays_o, rays_v,
+            reflect, mask
+        ]]
+
+        return res
+
+    def gen_random_rays(self):
+        """
+        Generate random rays at world space from one camera.
+        """
+        pixels_x = torch.randint(low=self.wid_range[0], 
+                                 high=self.wid_range[1],
+                                 size=[self.sample_num])
+        pixels_y = torch.randint(low=self.hei_range[0],
+                                 high=self.hei_range[1],
+                                 size=[self.sample_num])
+        color = self.img_set[:, pixels_y, pixels_x].permute(1, 0)    # batch_size, 3
+        mask = self.mask_occ[:, pixels_y, pixels_x].permute(1, 0)      # batch_size, 1
+        ref = self.ref_set[:, pixels_y, pixels_x].permute(1, 0)     # MOD: batch_size, 2
+        # depth = self.depth[:, pixels_y, pixels_x].permute(1, 0)
+        rays_o = self.positions[pixels_y, pixels_x].to(self.device)  # [batch_size, 3]
+        rays_v = self.direction.view(1, 3).expand(rays_o.shape)
+        
+        # MOD：Return value
+        res = [x.to(self.device) for x in [
+            rays_o, rays_v, ref, mask, color,  # depth
+        ]]
+        return res
+
+    def get_w2c(self):
+        return self.w2c
+
+    def near_far_from_sphere(self, rays_o, rays_d):
+        # z direction: from -1 to 1
+        near = - 1.0 - rays_o[:, -1:]
+        far = 1.0 - rays_o[:, -1:]
+        return near, far
+
+    def __getitem__(self, idx):
+        # Generate random rays from one camera
+        # img_hei, img_wid = self.img_set.shape[-2:]
+
+        rays_o, rays_v, ref, mask, color = self.gen_random_rays()
+        ret = {
+            # 'idx': torch.Tensor([idx]),
+            'rays_o': rays_o,                               # [N, 3]
+            'rays_v': rays_v,                               # [N, 3]
+            'mask': mask,                                   # [N, 1]
+            'color': color,                                 # [N, C]
+            'reflect': ref,                                 # [N, 2]
+            # 'pat': self.pat_set,                        # [C, Hp, Wp]
+        }
+        return ret

@@ -48,6 +48,8 @@ class Worker:
         self.device = args.device
         self.train_shuffle = True
         self.n_iter = None
+        self.epoch_start = None
+        self.epoch_end = None
         self.history_best = [None, True]
 
         self.stopwatch = None
@@ -195,22 +197,26 @@ class Worker:
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, self.args.lr_step, gamma=gamma, last_epoch=-1)
         self.logging(f'Learning rate: {self.args.lr} * {gamma} for every {self.args.lr_step}')
 
-    def do(self):
+    def prepare_training(self):
         # Set initial things
-        epoch_start = self.args.epoch_start
+        self.epoch_start = self.args.epoch_start
         if self.args.exp_type == 'train':
-            epoch_end = epoch_start + 2 if self.args.debug_mode else self.args.epoch_end
-            self.n_iter = int(epoch_start * len(self.train_dataset) / self.N)
+            self.epoch_end = self.epoch_start + 2 if self.args.debug_mode else self.args.epoch_end
+            self.n_iter = int(self.epoch_start * len(self.train_dataset) / self.N)
         elif self.args.exp_type in ['eval', 'online']:
-            epoch_end = epoch_start + 1
+            self.epoch_end = self.epoch_start + 1
             self.n_iter = 0
         else:
             raise NotImplementedError(f'Wrong exp_type: {self.args.exp_type}')
 
         # Load network
-        self._net_load(epoch_start - 1)
+        self._net_load(self.epoch_start - 1)
         if self.args.data_parallel:
             self._net_parallel()
+
+    def do(self):
+        
+        self.prepare_training()
 
         # Set average meters for logging
         self.avg_meters['Total'] = plb.EpochMeter('Total')
@@ -218,7 +224,7 @@ class Worker:
             self.avg_meters[loss_name] = plb.EpochMeter(loss_name)
         self.logging(f'Loss meters: {self.avg_meters.keys()}')
 
-        for epoch_num in range(epoch_start, epoch_end):
+        for epoch_num in range(self.epoch_start, self.epoch_end):
             if self.args.exp_type in ['train', 'online']:
                 # lr = self.scheduler.get_last_lr()[0]
                 # self.logging(f'Start training epoch {epoch_num}: lr={lr} <{self.time_keeper}>', tag='epoch', step=epoch_num)
@@ -252,7 +258,7 @@ class Worker:
         self.avg_meters[loss_name].update(loss, self.N)
         return loss if return_val_only else ret
 
-    def check_save_res(self, epoch):
+    def check_save_res(self, **kwargs):
         """
             Only check if epoch_num reached the save_stone.
             Please inherit this function if you have other requirements.
@@ -260,7 +266,7 @@ class Worker:
         if self.args.save_stone == 0:
             return False
         else:
-            return (epoch + 1) % self.args.save_stone == 0
+            return (kwargs['epoch'] + 1) % self.args.save_stone == 0
     
     def callback_save_res(self, epoch, data, net_out, dataset):
         raise NotImplementedError(':callback_save_res() is not implemented by base class.')
@@ -283,6 +289,9 @@ class Worker:
             raise NotImplementedError(f'Error status flag: {self.status}')
 
         return False
+
+    def callback_after_iteration(self, idx, data, epoch):
+        pass
 
     def callback_realtime_report(self, batch_idx, batch_total, epoch, tag, step, log_flag=True):
         # Write loss
@@ -391,20 +400,20 @@ class Worker:
             with self.stopwatch.record('optimizer'):
                 self.optimizer.step()
 
+            self.callback_after_iteration(idx, data, epoch)
+
             #
             # Reporting part
             #
-            if self.check_save_res(epoch):
-                self.callback_save_res(epoch=epoch, data=data, net_out=output, dataset=self.train_dataset)
-
-            # Report in real-time
-            if self.check_realtime_report():
+            iter_kwargs = dict(idx=idx, epoch=epoch, data=data, net_out=output)
+            if self.check_realtime_report(**iter_kwargs):
                 self.callback_realtime_report(batch_idx=idx, batch_total=len(train_loader), epoch=epoch,
                                               tag='train', step=self.n_iter)
-
-            # Draw image
-            if self.check_img_visual(idx=idx, data=data):
+            if self.check_img_visual(**iter_kwargs):
                 self.callback_img_visual(data=data, net_out=output, tag='train', step=self.n_iter)
+
+            if self.check_save_res(**iter_kwargs):
+                self.callback_save_res(epoch=epoch, data=data, net_out=output, dataset=self.train_dataset)
 
             if self.args.debug_mode:
                 break

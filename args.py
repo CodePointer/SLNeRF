@@ -103,6 +103,14 @@ def get_args():
                         type=int)
 
     # Parameters in training
+    parser.add_argument('--total_iter',
+                        help='Total iteration times for training.',
+                        default=10,
+                        type=int)
+    parser.add_argument('--iter_start',
+                        help='Starting iteration.',
+                        default=0,
+                        type=int)
     parser.add_argument('--pat_set',
                         help='Pattern number set for training.',
                         default='',
@@ -111,14 +119,16 @@ def get_args():
                         help='Index of reflection images.',
                         default='',
                         type=str)
-    parser.add_argument('--alpha_stone',
-                        help='alpha value & shrink epoch for sampling.',
-                        default='0-1.0',
+    # Parameters
+    parser.add_argument('--patnum_scheduler',
+                        help='How many patterns are used for constraint. -1 for all patterns are used.',
+                        default='-1',
                         type=str)
-    parser.add_argument('--lambda_stone',
-                        help='lambda to leverage warping loss.',
-                        default='0-0.0',
+    parser.add_argument('--warp_scheduler',
+                        help='Leverage warping loss.',
+                        default='0.0',
                         type=str)
+    
     parser.add_argument('--ablation_tag',
                         help='tag for ablation study.',
                         default='',
