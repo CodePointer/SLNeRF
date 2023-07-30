@@ -1,0 +1,4 @@
+VAL1=2
+VAL2=20
+
+echo $[VAL1 * VAL2]

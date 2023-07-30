@@ -12,10 +12,11 @@
             "console": "integratedTerminal",
             "args": [
                 "--config",
-                "${workspaceFolder}/params/xyz2density_train.ini",
+                "${workspaceFolder}/params/xyz2sdf_train.ini",
+                "--debug_mode",
             ],
             "env": {
-                "CUDA_VISIBLE_DEVICES": "1",
+                "CUDA_VISIBLE_DEVICES": "0",
             },
         },
         {

@@ -36,7 +36,7 @@ class SuperviseDistLoss(BaseLoss):
         else:
             raise NotImplementedError(f'Unknown loss type: {dist}')
 
-    def forward(self, pred, target, mask=None):
+    def forward(self, pred, target, mask=None, scale=1.0):
         """
         disp_prd: [N, 1, H, W]
         """
@@ -44,6 +44,7 @@ class SuperviseDistLoss(BaseLoss):
         if mask is None:
             mask = torch.ones_like(pred)
         val = (err_map * mask).sum() / (mask.sum() + 1e-8)
+        val *= scale
         return val, err_map
 
 

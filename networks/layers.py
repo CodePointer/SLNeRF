@@ -4,6 +4,7 @@
 import torch
 import numpy as np
 import pointerlib as plb
+from dataset.dataset_neus import apply_4x4mat
 
 
 # - Coding Part - #
@@ -113,6 +114,52 @@ class WarpFromXyz(torch.nn.Module):
             warped_set: [N, 3]
         """
         xyz_cam = xyz_set * self.scale_mat[0, 0] + self.scale_mat[:3, 3][None, :]  # [N, 3]
+        xyz_pat = torch.matmul(self.ext_rot, xyz_cam[:, :, None]) + self.ext_tran[:, None]  # [N, 3, 1]
+        xyz_pat = xyz_pat.squeeze(2)
+
+        fu, fv, du, dv = self.pat_intrin
+        pixels_u = fu * (xyz_pat[:, 0] / xyz_pat[:, 2]) + du
+        pixels_v = fv * (xyz_pat[:, 1] / xyz_pat[:, 2]) + dv
+
+        hei_s, wid_s = self.pat_mat.shape[-2:]
+
+        uu = 2.0 * pixels_u / (wid_s - 1) - 1.0
+        vv = 2.0 * pixels_v / (hei_s - 1) - 1.0
+        uv_mat = torch.stack([uu, vv], dim=-1).reshape(1, -1, 1, 2)  # [1, N, 1, 2]
+
+        sample_mat = torch.nn.functional.grid_sample(self.pat_mat, uv_mat, padding_mode='zeros', align_corners=False)
+        # if mask_flag:
+        #     one_mat = torch.ones_like(self.pat_mat)
+        #     mask = torch.nn.functional.grid_sample(one_mat, uv_mat, padding_mode='zeros', align_corners=False)
+        #     mask[mask > 0.99] = 1.0
+        #     mask[mask < 1.0] = 0.0
+        #     sample_mat *= mask
+
+        return sample_mat.squeeze(axis=3)[0].permute(1, 0)  # [N, C]
+
+
+class WarpFromXyzUni(WarpFromXyz):
+    def __init__(self, calib_para, pat_mat, w2c, device=None):
+        """
+
+        :param calib_para:
+        :param pat_mat: [C, Hp, Wp]
+        :param scale_mat:
+        :param device:
+        """
+        super().__init__(calib_para, pat_mat, np.eye(4), device)
+        self.w2c = w2c.to(device)
+        pass
+
+    def forward(self, xyz_set, mask_flag=False):
+        """
+            xyz_set: [N, 3], range: [-1, 1]
+            src_mat:  [N, C, Hs, Ws]
+            mask_flag: Set to 0 when True.
+        :return:
+            warped_set: [N, 3]
+        """
+        xyz_cam = apply_4x4mat(xyz_set, self.w2c)
         xyz_pat = torch.matmul(self.ext_rot, xyz_cam[:, :, None]) + self.ext_tran[:, None]  # [N, 3, 1]
         xyz_pat = xyz_pat.squeeze(2)
 
