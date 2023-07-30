@@ -143,6 +143,12 @@ def get_args():
                         default=0,
                         type=int)
 
+    # Parameter for classic decoder
+    parser.add_argument('--gc_digit',
+                        help='Used for gray code based methods.',
+                        default=0,
+                        type=int)
+
     args = parser.parse_args()
     return args
 

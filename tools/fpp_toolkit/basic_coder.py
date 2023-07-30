@@ -86,14 +86,28 @@ class GrayCodeCoder:
             gray_mat = gray_mat.transpose([0, 2, 1])
         return gray_mat
 
-    def decode_imgs(self, img_list, img_inv_list=None):
+    def decode_imgs(self, img_list, img_inv_list=None, img_base=None):
         img_list = load_img(img_list)
         img_array = np.stack(img_list, axis=0).astype(np.float32)  # [C, H, W]
 
         #
         # img -> gray_array
         #
-        if img_inv_list is None:
+        if img_inv_list is not None:
+            img_inv_list = load_img(img_inv_list)
+            img_inv_array = np.stack(img_inv_list, axis=0).astype(np.float32)
+            gray_array = (img_array - img_inv_array > 0).astype(np.int32)
+
+        elif img_base is not None:
+            img_base_list = load_img(img_base)
+            img_mid = (img_base_list[0] + img_base_list[1]) * 0.5
+            img_max = np.max(img_array, axis=0, keepdims=True)
+            img_min = np.min(img_array, axis=0, keepdims=True)
+            gray_array = (img_array > img_mid).astype(np.int32)
+            gray_array[(img_max < 50.0).repeat(gray_array.shape[0], axis=0)] = 0
+            gray_array[(img_min > 200.0).repeat(gray_array.shape[0], axis=0)] = 1
+
+        else:
             img_max = np.max(img_array, axis=0, keepdims=True)
             img_min = np.min(img_array, axis=0, keepdims=True)
             img_mid = (img_max + img_min) * 0.5
@@ -102,10 +116,6 @@ class GrayCodeCoder:
             gray_array = (img_array > img_mid).astype(np.int32)
             gray_array[np.logical_and(img_dis < 30.0, img_max < 50.0).repeat(gray_array.shape[0], axis=0)] = 0
             gray_array[np.logical_and(img_dis < 30.0, img_min > 200.0).repeat(gray_array.shape[0], axis=0)] = 1
-        else:
-            img_inv_list = load_img(img_inv_list)
-            img_inv_array = np.stack(img_inv_list, axis=0).astype(np.float32)
-            gray_array = (img_array - img_inv_array > 0).astype(np.int32)
 
         #
         # gray_array -> bin

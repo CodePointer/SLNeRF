@@ -13,7 +13,7 @@ from configparser import ConfigParser
 from pathlib import Path
 import numpy as np
 
-from tools.fpp_toolkit import BFHPMPCoder, BFNPMPCoder, GCCPMPCoder, coord2depth
+from tools.fpp_toolkit import BFHPMPCoder, BFNPMPCoder, GCCPMPCoder, GCOnlyCoder, coord2depth
 import pointerlib as plb
 
 
@@ -71,6 +71,12 @@ class ExpClassicWorker:
             wave_length = int(self.coder.pmp_coder.wave_length)
             kwargs['gray_pats'] = tag2img(*[f'gc{i}' for i in range(gc_digit)])
             kwargs['phase_pats'] = tag2img(*[f'pm{wave_length}n3i{i}' for i in (0, 1, 2)])
+
+        elif self.args.argset == 'ClassicGrayOnly':
+            self.coder = GCOnlyCoder(hei, wid, self.args.gc_digit)
+            kwargs['gray_pats'] = tag2img(*[f'gc{i}' for i in range(self.args.gc_digit)])
+            kwargs['gray_pats_inv'] = tag2img(*[f'gc{i}inv' for i in range(self.args.gc_digit)])
+            # kwargs['img_base'] = tag2img('uni200', 'uni100')
 
         coord_wid = self.coder.decode(**kwargs)[0]
 

@@ -1,15 +1,19 @@
-DATA_DIR="C:/SLDataSet/SLNeRF/1_Collected0218"
+DATA_DIR="C:/SLDataSet/SLNeRF/6_Dataset0523"
 OUT_DIR=${DATA_DIR}"-out"
 
-for (( i=9; i<=9; i++ ))
+for (( i=0; i<=3; i++ ))  # scene
 do
-    for ARGSET in ClassicGCC  # ClassicBFH ClassicBFN
+    SCENE_NUM=$(echo $i | awk '{printf("%02d",$0)}')
+    for ARGSET in ClassicGrayOnly  # ClassicBFH ClassicBFN
     do
-        NUM=$(echo $i | awk '{printf("%02d",$0)}')
-        python ../main.py \
-            --argset ${ARGSET} \
-            --train_dir ${DATA_DIR}/scene_"${NUM}" \
-            --out_dir ${OUT_DIR}/scene_"${NUM}" \
-            --run_tag eval34
+        for (( j=3; j<=11; j++))
+        do
+          python main.py \
+              --argset ${ARGSET} \
+              --train_dir ${DATA_DIR}/scene_"${SCENE_NUM}" \
+              --out_dir ${OUT_DIR}/scene_"${SCENE_NUM}" \
+              --gc_digit ${j} \
+              --run_tag gcdinv"${j}"
+        done
     done
 done

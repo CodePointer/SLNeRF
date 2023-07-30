@@ -17,6 +17,7 @@ from tools.fpp_toolkit.basic_coder import GrayCodeCoder, PMPCoder
 from tools.fpp_toolkit.gcpmp_coder import GCCPMPCoder
 from tools.fpp_toolkit.hpmp_coder import BFHPMPCoder, BFNPMPCoder
 from tools.fpp_toolkit.our_gt_coder import MyGTCoder, MyMaskCoder
+from tools.fpp_toolkit.gconly_coder import GCOnlyCoder
 
 
 # - Coding Part - #

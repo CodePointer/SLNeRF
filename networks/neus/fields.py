@@ -295,3 +295,36 @@ class SDFNetworkFree(SDFNetwork):
                 x = self.activation(x)
 
         return x / self.scale
+
+
+class ColorNetwork(RenderingNetwork):  # TODO: Not finished.
+    def __init__(self, d_feature, mode, d_in, d_out, d_hidden, n_layers, warp_layer, weight_norm=True, multires_view=0,
+                 squeeze_out=True, sigma_max=10.0, patch_rad=7):
+        super().__init__(d_feature, mode, d_in, d_out, d_hidden, n_layers, weight_norm, multires_view, squeeze_out)
+        self.warp_layer = warp_layer
+        self.sigma_max = sigma_max
+        self.rad = patch_rad
+        self.dist_kernel = None
+
+    def gaussian_sum(self, pat_warped, rho, sigma_x, sigma_y):
+        para1 = 1.0 / (2 * np.pi * sigma_x * sigma_y * torch.sqrt(1 - rho ** 2))
+        para2 = - 1.0 / (2 * (1.0 - rho ** 2))
+        xx = self.dist_kernel[:, 0]
+        yy = self.dist_kernel[:, 1]
+        para3 = xx ** 2 / sigma_x ** 2 + yy ** 2 / sigma_y ** 2 - 2 * rho * xx * yy / (sigma_x * sigma_y)
+        kernel_val = para1 * torch.exp(para2 * para3)
+        pat_mul = pat_warped * kernel_val
+        pat_sum = torch.sum(pat_mul)
+        return pat_sum
+
+    def forward(self, points, normals, view_dirs, feature_vectors):
+        res = super().forward(points, normals, None, feature_vectors)  # [N, 5]
+        a, b, rho, sigma_x, sigma_y = torch.split(res, 5, dim=1)  # [N, 1]
+        sigma_x *= self.sigma_max
+        sigma_y *= self.sigma_max
+
+        # Warp layer to give out result
+        pat_warped = self.warp_layer(points)
+        pat_color = self.gaussian_sum(pat_warped, rho, sigma_x, sigma_y)
+        img_color = a * pat_color + b
+        return img_color

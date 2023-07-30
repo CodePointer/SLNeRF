@@ -22,6 +22,7 @@ def get_worker(args):
         'ClassicBFH': ExpClassicWorker,
         'ClassicBFN': ExpClassicWorker,
         'ClassicGCC': ExpClassicWorker,
+        'ClassicGrayOnly': ExpClassicWorker,
     }
     assert args.argset in worker_set.keys()
     return worker_set[args.argset](args)
