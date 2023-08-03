@@ -47,18 +47,12 @@ class ExpXyz2SdfWorker(Worker):
         self.renderer = None
 
         # init_losses()
-        # self.super_loss = None
         self.parameters = {
-            'igr': plb.ParamScheduler('0.1', float),
+            'render': plb.ParamScheduler(self.args.render_scheduler, float),
+            'igr': plb.ParamScheduler(self.args.igr_scheduler, float),
             'pat_num': plb.ParamScheduler(self.args.patnum_scheduler, int),
             'warp': plb.ParamScheduler(self.args.warp_scheduler, float),
         }
-        self.igr_weight = 0.1
-        # self.lambda_set = []
-        # for pair_str in args.lambda_stone.split(','):
-        #     epoch_idx, value = pair_str.split('-')
-        #     self.lambda_set.append([int(epoch_idx), float(value)])
-        # self.warp_lambda = 1.0
 
         self.anneal_ratio = 1.0
         self.anneal_end = 0
@@ -230,9 +224,9 @@ class ExpXyz2SdfWorker(Worker):
         color_fine_loss = self.loss_record(
             'color_fine', pred=net_out['color_fine'][:, :pat_num], 
             target=data['color'][:, :pat_num], mask=data['mask'],
-            scale=1.0 / float(pat_num)
+            scale=1.0 / float(pat_num)  # Average
         )
-        total_loss += color_fine_loss  # Average
+        total_loss += color_fine_loss * self.parameters['render'].get_value()
 
         # eikonal_loss
         eikonal_loss = self.loss_record(
@@ -297,7 +291,7 @@ class ExpXyz2SdfWorker(Worker):
         if self.args.save_stone == 0:
             return False
         else:
-            return self.n_iter % self.args.save_stone == 0
+            return self.n_iter % self.args.save_stone == 0 or ((self.n_iter + 100) % self.args.save_stone == 0)
 
     def callback_save_res(self, epoch, data, net_out, dataset):
         """
