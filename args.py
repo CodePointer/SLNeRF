@@ -124,6 +124,14 @@ def get_args():
                         help='How many patterns are used for constraint. -1 for all patterns are used.',
                         default='-1',
                         type=str)
+    parser.add_argument('--render_scheduler',
+                        help='Leverage warping loss.',
+                        default='1.0',
+                        type=str)
+    parser.add_argument('--igr_scheduler',
+                        help='Leverage warping loss.',
+                        default='0.1',
+                        type=str)
     parser.add_argument('--warp_scheduler',
                         help='Leverage warping loss.',
                         default='0.0',
