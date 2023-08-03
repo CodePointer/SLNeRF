@@ -1,5 +1,5 @@
-DATA_DIR="/media/qiao/Videos/SLDataSet/SLNeuS/7_Dataset0531"
-SCENE_IDX_LIST=( 00 01 02 03 04 05 )
+DATA_DIR="/media/qiao/Videos/SLDataSet/SLNeuS/8_Dataset0801"
+SCENE_IDX_LIST=( 00 01 02 03 )
 PAT_SET_LIST=(
     "gc0,gc1,gc2"
     "gc0,gc1,gc2,gc3"

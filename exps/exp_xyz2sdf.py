@@ -291,7 +291,7 @@ class ExpXyz2SdfWorker(Worker):
         if self.args.save_stone == 0:
             return False
         else:
-            return self.n_iter % self.args.save_stone == 0 or ((self.n_iter - 100) % self.args.save_stone == 0)
+            return self.n_iter % self.args.save_stone == 0 or ((self.n_iter + 100) % self.args.save_stone == 0)
 
     def callback_save_res(self, epoch, data, net_out, dataset):
         """
