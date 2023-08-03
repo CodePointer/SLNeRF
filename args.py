@@ -159,6 +159,9 @@ def get_args():
     parser.add_argument('--interpolation',
                         help='Interpolate gray code or not',
                         action='store_true')
+    parser.add_argument('--invert_projection',
+                        help='Invert projection for gray code or not',
+                        action='store_true')
 
     args = parser.parse_args()
     return args

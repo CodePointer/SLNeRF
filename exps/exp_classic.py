@@ -66,7 +66,7 @@ class ExpClassicWorker:
             kwargs['pat_sub'] = tag2img('pm70n3i0', 'pm70n3i1', 'pm70n3i2')
 
         elif self.args.argset == 'ClassicGCC':
-            gc_digit = 4
+            gc_digit = self.args.gc_digit
             self.coder = GCCPMPCoder(hei, wid, gc_digit)
             wave_length = int(self.coder.pmp_coder.wave_length)
             kwargs['gray_pats'] = tag2img(*[f'gc{i}' for i in range(gc_digit)])
@@ -75,14 +75,17 @@ class ExpClassicWorker:
         elif self.args.argset == 'ClassicGrayOnly':
             self.coder = GCOnlyCoder(hei, wid, self.args.gc_digit, interpolation=self.args.interpolation)
             kwargs['gray_pats'] = tag2img(*[f'gc{i}' for i in range(self.args.gc_digit)])
-            kwargs['gray_pats_inv'] = tag2img(*[f'gc{i}inv' for i in range(self.args.gc_digit)])
+            kwargs['gray_pats_inv'] = None
+            if self.args.invert_projection:
+                kwargs['gray_pats_inv'] = tag2img(*[f'gc{i}inv' for i in range(self.args.gc_digit)])
             kwargs['mask'] = [self.train_dir / 'gt' / 'mask_occ.png']
             # kwargs['img_base'] = tag2img('uni200', 'uni100')
 
         coord_wid = self.coder.decode(**kwargs)
+        coord_wid = coord_wid[0]
 
         # Save
-        save_folder = self.res_dir / f'output/e_00000'
+        save_folder = self.res_dir / f'output/iter_04000'
         save_folder.mkdir(parents=True, exist_ok=True)
         plb.imsave(save_folder / 'coord_x.png', coord_wid, scale=50.0, img_type=np.uint16)
         calib_para = [

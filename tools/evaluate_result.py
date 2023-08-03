@@ -86,7 +86,7 @@ class Evaluator:
         current_row = start_row
         exp_set = sorted([x for x in out_path.glob('*') if x.is_dir()])
         for i, exp_path in enumerate(exp_set):
-            epoch_set = sorted([x for x in (exp_path / 'output').glob('e_*') if x.is_dir()],
+            epoch_set = sorted([x for x in (exp_path / 'output').glob('*_*') if x.is_dir()],
                                key=lambda x: int(x.name.split('_')[1]))
             for j, epoch_folder in enumerate(epoch_set):
                 work_sheet.cell(current_row, 1).value = exp_path.name
@@ -428,7 +428,10 @@ def main():
         flush_flag=False,
         pre_process_flag=True,
     )
-    app.evaluate_sequence('0531_scene_00')
+    app.evaluate_sequence('scene_00')
+    app.evaluate_sequence('scene_01')
+    app.evaluate_sequence('scene_02')
+    app.evaluate_sequence('scene_03')
 
     # data_path = Path('C:/SLDataSet/SLNeRF/7_Dataset0531/scene_00')
     # out_path = Path('C:/SLDataSet/SLNeRF/7_Dataset0531-out/scene_00')
