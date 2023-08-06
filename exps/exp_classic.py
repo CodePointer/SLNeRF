@@ -24,7 +24,7 @@ class ExpClassicWorker:
         self.args = args
 
         def safe_path(input_str):
-            return None if input_str is '' else Path(input_str)
+            return None if input_str == '' else Path(input_str)
 
         self.train_dir = safe_path(self.args.train_dir)
         self.test_dir = safe_path(self.args.test_dir)
@@ -82,7 +82,8 @@ class ExpClassicWorker:
             # kwargs['img_base'] = tag2img('uni200', 'uni100')
 
         coord_wid = self.coder.decode(**kwargs)
-        coord_wid = coord_wid[0]
+        if len(coord_wid.shape) == 3:
+            coord_wid = coord_wid[0]
 
         # Save
         save_folder = self.res_dir / f'output/iter_04000'

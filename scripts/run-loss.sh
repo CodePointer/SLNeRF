@@ -1,6 +1,6 @@
 DATA_DIR="/media/qiao/Videos/SLDataSet/SLNeuS/8_Dataset0801"
-SCENE_IDX_LIST=( 00 01 02 03 04 05 )
-PAT_SET="arr20r0,arr10r0,arr5r0,arr3r0"
+SCENE_IDX_LIST=( 05 06 )
+PAT_SET="arr20r0,arr20r1,arr10r0,arr10r1,arr5r0,arr5r1"
 
 echo "CUDA ["${1}"]: Exp loss; Scene num "${#SCENE_IDX_LIST[*]}
 

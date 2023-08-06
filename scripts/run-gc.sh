@@ -1,5 +1,5 @@
 DATA_DIR="/media/qiao/Videos/SLDataSet/SLNeuS/8_Dataset0801"
-SCENE_IDX_LIST=( 00 01 02 03 )
+SCENE_IDX_LIST=( 05 06 )
 PAT_SET_LIST=(
     "gc0,gc1,gc2"
     "gc0,gc1,gc2,gc3"
