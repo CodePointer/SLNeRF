@@ -6,7 +6,7 @@
 # @File:      draw_distance_map.py
 # @Software:  PyCharm
 # @Description:
-#   将pattern转换为distance map.
+#   Translate pattern into the distance map.
 
 # - Package Imports - #
 from pathlib import Path

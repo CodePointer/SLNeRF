@@ -50,7 +50,9 @@ class ExpClassicWorker:
         hei, wid = self.pat_size
 
         def tag2img(*tags):
-            return list(map(lambda tag: self.train_dir / f'img/img_{tag}.png', tags))
+            # return list(map(lambda tag: self.train_dir / f'img/img_{tag}.png', tags))  # TODO
+            scene_dirs = [self.train_dir.parent / f'scene_{x:02}' for x in range(len(tags))]
+            return [self.train_dir.parent / f'scene_{x:02}/img/img_{tags[x]}.png' for x in range(len(tags))]
 
         # Coder
         kwargs = {}

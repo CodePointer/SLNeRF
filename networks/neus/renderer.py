@@ -6,7 +6,7 @@ import logging
 import mcubes
 # from icecream import ic
 
-from nerfacc import ContractionType, OccupancyGrid, ray_marching, render_weight_from_alpha, accumulate_along_rays
+# from nerfacc import ContractionType, OccupancyGrid, ray_marching, render_weight_from_alpha, accumulate_along_rays
 
 
 def extract_fields(bound_min, bound_max, resolution, query_func):
@@ -375,140 +375,140 @@ class NeuSRenderer:
         pass
 
 
-class NeuSRendererMarching(nn.Module, NeuSRenderer):
-    def __init__(self, 
-                 sdf_network, 
-                 deviation_network, 
-                 color_network, 
-                 n_samples=64, 
-                 n_importance=64, 
-                 up_sample_steps=4, 
-                 perturb=1):
-        nn.Module.__init__(self)
-        NeuSRenderer.__init__(self, sdf_network, deviation_network, color_network, n_samples, n_importance, up_sample_steps, perturb)
+# class NeuSRendererMarching(nn.Module, NeuSRenderer):
+#     def __init__(self, 
+#                  sdf_network, 
+#                  deviation_network, 
+#                  color_network, 
+#                  n_samples=64, 
+#                  n_importance=64, 
+#                  up_sample_steps=4, 
+#                  perturb=1):
+#         nn.Module.__init__(self)
+#         NeuSRenderer.__init__(self, sdf_network, deviation_network, color_network, n_samples, n_importance, up_sample_steps, perturb)
 
-        self.radius = 1.01
-        self.n_samples = 512
-        self.register_buffer('scene_aabb', torch.as_tensor([-self.radius, -self.radius, -self.radius, self.radius, self.radius, self.radius], dtype=torch.float32))
-        self.scene_aabb = self.scene_aabb.cuda()
-        self.occupancy_grid = OccupancyGrid(
-            roi_aabb=self.scene_aabb,
-            resolution=32,
-            contraction_type=ContractionType.AABB
-        ).cuda()
-        self.render_step_size = 1.732 * 2 * self.radius / self.n_samples
-        self.cos_anneal_ratio = 1.0
+#         self.radius = 1.01
+#         self.n_samples = 512
+#         self.register_buffer('scene_aabb', torch.as_tensor([-self.radius, -self.radius, -self.radius, self.radius, self.radius, self.radius], dtype=torch.float32))
+#         self.scene_aabb = self.scene_aabb.cuda()
+#         self.occupancy_grid = OccupancyGrid(
+#             roi_aabb=self.scene_aabb,
+#             resolution=32,
+#             contraction_type=ContractionType.AABB
+#         ).cuda()
+#         self.render_step_size = 1.732 * 2 * self.radius / self.n_samples
+#         self.cos_anneal_ratio = 1.0
     
-    def get_alpha(self, sdf, normal, dirs, dists):
-        inv_s = self.deviation_network(torch.zeros([1, 3]))[:, :1].clip(1e-6, 1e6)           # Single parameter
-        inv_s = inv_s.expand(sdf.shape[0], 1)
+#     def get_alpha(self, sdf, normal, dirs, dists):
+#         inv_s = self.deviation_network(torch.zeros([1, 3]))[:, :1].clip(1e-6, 1e6)           # Single parameter
+#         inv_s = inv_s.expand(sdf.shape[0], 1)
 
-        true_cos = (dirs * normal).sum(-1, keepdim=True)
+#         true_cos = (dirs * normal).sum(-1, keepdim=True)
 
-        # "cos_anneal_ratio" grows from 0 to 1 in the beginning training iterations. The anneal strategy below makes
-        # the cos value "not dead" at the beginning training iterations, for better convergence.
-        iter_cos = -(F.relu(-true_cos * 0.5 + 0.5) * (1.0 - self.cos_anneal_ratio) +
-                     F.relu(-true_cos) * self.cos_anneal_ratio)  # always non-positive
+#         # "cos_anneal_ratio" grows from 0 to 1 in the beginning training iterations. The anneal strategy below makes
+#         # the cos value "not dead" at the beginning training iterations, for better convergence.
+#         iter_cos = -(F.relu(-true_cos * 0.5 + 0.5) * (1.0 - self.cos_anneal_ratio) +
+#                      F.relu(-true_cos) * self.cos_anneal_ratio)  # always non-positive
 
-        # Estimate signed distances at section points
-        estimated_next_sdf = sdf + iter_cos * dists.reshape(-1, 1) * 0.5
-        estimated_prev_sdf = sdf - iter_cos * dists.reshape(-1, 1) * 0.5
+#         # Estimate signed distances at section points
+#         estimated_next_sdf = sdf + iter_cos * dists.reshape(-1, 1) * 0.5
+#         estimated_prev_sdf = sdf - iter_cos * dists.reshape(-1, 1) * 0.5
 
-        prev_cdf = torch.sigmoid(estimated_prev_sdf * inv_s)
-        next_cdf = torch.sigmoid(estimated_next_sdf * inv_s)
+#         prev_cdf = torch.sigmoid(estimated_prev_sdf * inv_s)
+#         next_cdf = torch.sigmoid(estimated_next_sdf * inv_s)
 
-        p = prev_cdf - next_cdf
-        c = prev_cdf
+#         p = prev_cdf - next_cdf
+#         c = prev_cdf
 
-        alpha = ((p + 1e-5) / (c + 1e-5)).view(-1).clip(0.0, 1.0)
-        return alpha
+#         alpha = ((p + 1e-5) / (c + 1e-5)).view(-1).clip(0.0, 1.0)
+#         return alpha
 
-    def update_step(self, n_iter):
+#     def update_step(self, n_iter):
         
-        def occ_eval_fn(x):
-            sdf = self.sdf_network(x)
-            inv_s = self.deviation_network(torch.zeros([1, 3]))[:, :1].clip(1e-6, 1e6)
-            inv_s = inv_s.expand(sdf.shape[0], 1)
-            estimated_next_sdf = sdf - self.render_step_size * 0.5
-            estimated_prev_sdf = sdf + self.render_step_size * 0.5
-            prev_cdf = torch.sigmoid(estimated_prev_sdf * inv_s)
-            next_cdf = torch.sigmoid(estimated_next_sdf * inv_s)
-            p = prev_cdf - next_cdf
-            c = prev_cdf
-            alpha = ((p + 1e-5) / (c + 1e-5)).view(-1, 1).clip(0.0, 1.0)
-            return alpha
+#         def occ_eval_fn(x):
+#             sdf = self.sdf_network(x)
+#             inv_s = self.deviation_network(torch.zeros([1, 3]))[:, :1].clip(1e-6, 1e6)
+#             inv_s = inv_s.expand(sdf.shape[0], 1)
+#             estimated_next_sdf = sdf - self.render_step_size * 0.5
+#             estimated_prev_sdf = sdf + self.render_step_size * 0.5
+#             prev_cdf = torch.sigmoid(estimated_prev_sdf * inv_s)
+#             next_cdf = torch.sigmoid(estimated_next_sdf * inv_s)
+#             p = prev_cdf - next_cdf
+#             c = prev_cdf
+#             alpha = ((p + 1e-5) / (c + 1e-5)).view(-1, 1).clip(0.0, 1.0)
+#             return alpha
         
-        self.occupancy_grid.every_n_step(step=n_iter - 1, occ_eval_fn=occ_eval_fn, occ_thre=0.01)
+#         self.occupancy_grid.every_n_step(step=n_iter - 1, occ_eval_fn=occ_eval_fn, occ_thre=0.01)
 
-    def render(self,
-               rays_o, 
-               rays_d, 
-               reflect,  # MOD
-               near, 
-               far, 
-               perturb_overwrite=-1, 
-               background_rgb=None, 
-               cos_anneal_ratio=0.0):
-        n_rays = rays_o.shape[0]
+#     def render(self,
+#                rays_o, 
+#                rays_d, 
+#                reflect,  # MOD
+#                near, 
+#                far, 
+#                perturb_overwrite=-1, 
+#                background_rgb=None, 
+#                cos_anneal_ratio=0.0):
+#         n_rays = rays_o.shape[0]
 
-        alpha_fn = None
+#         alpha_fn = None
 
-        # Marching
-        with torch.no_grad():
-            ray_indices, t_starts, t_ends = ray_marching(
-                rays_o, rays_d,
-                scene_aabb=self.scene_aabb,
-                grid=self.occupancy_grid,
-                alpha_fn=alpha_fn,
-                near_plane=None, far_plane=None,
-                render_step_size=self.render_step_size,
-                stratified=False,
-                cone_angle=0.0,
-                alpha_thre=0.0
-            )
-        ray_indices = ray_indices.long()
-        t_origins = rays_o[ray_indices]
-        t_dirs = rays_d[ray_indices]
-        midpoints = (t_starts + t_ends) / 2.
-        positions = t_origins + t_dirs * midpoints
-        dists = t_ends - t_starts
-        ref_pts = reflect[ray_indices]
+#         # Marching
+#         with torch.no_grad():
+#             ray_indices, t_starts, t_ends = ray_marching(
+#                 rays_o, rays_d,
+#                 scene_aabb=self.scene_aabb,
+#                 grid=self.occupancy_grid,
+#                 alpha_fn=alpha_fn,
+#                 near_plane=None, far_plane=None,
+#                 render_step_size=self.render_step_size,
+#                 stratified=False,
+#                 cone_angle=0.0,
+#                 alpha_thre=0.0
+#             )
+#         ray_indices = ray_indices.long()
+#         t_origins = rays_o[ray_indices]
+#         t_dirs = rays_d[ray_indices]
+#         midpoints = (t_starts + t_ends) / 2.
+#         positions = t_origins + t_dirs * midpoints
+#         dists = t_ends - t_starts
+#         ref_pts = reflect[ray_indices]
 
-        sdf_nn_output = self.sdf_network(positions)
-        sdf = sdf_nn_output[:, :1]
-        gradients = self.sdf_network.gradient(positions).squeeze()
-        normal = F.normalize(gradients, p=2, dim=-1)
+#         sdf_nn_output = self.sdf_network(positions)
+#         sdf = sdf_nn_output[:, :1]
+#         gradients = self.sdf_network.gradient(positions).squeeze()
+#         normal = F.normalize(gradients, p=2, dim=-1)
 
         
-        alpha = self.get_alpha(sdf, normal, t_dirs, dists)[...,None]
-        proj_color = self.color_network(positions)
-        color = ref_pts[:, :1] * proj_color + ref_pts[:, 1:]
+#         alpha = self.get_alpha(sdf, normal, t_dirs, dists)[...,None]
+#         proj_color = self.color_network(positions)
+#         color = ref_pts[:, :1] * proj_color + ref_pts[:, 1:]
 
-        weights = render_weight_from_alpha(alpha, ray_indices=ray_indices, n_rays=n_rays)
-        weights_sum = accumulate_along_rays(weights, ray_indices, values=None, n_rays=n_rays)
-        color = accumulate_along_rays(weights, ray_indices, values=color, n_rays=n_rays)
+#         weights = render_weight_from_alpha(alpha, ray_indices=ray_indices, n_rays=n_rays)
+#         weights_sum = accumulate_along_rays(weights, ray_indices, values=None, n_rays=n_rays)
+#         color = accumulate_along_rays(weights, ray_indices, values=color, n_rays=n_rays)
 
-        # Eikonal loss
-        gradient_error = (torch.linalg.norm(gradients.reshape(-1, 3), ord=2, dim=-1) - 1.0) ** 2
-        gradient_error = gradient_error.sum() / gradient_error.shape[0]
+#         # Eikonal loss
+#         gradient_error = (torch.linalg.norm(gradients.reshape(-1, 3), ord=2, dim=-1) - 1.0) ** 2
+#         gradient_error = gradient_error.sum() / gradient_error.shape[0]
 
-        # 1pt rgb
-        depth = accumulate_along_rays(weights, ray_indices, values=midpoints, n_rays=n_rays)
-        positions_1pt = rays_o + rays_d * depth
-        color_1pt = reflect[:, :1] * self.color_network(positions_1pt) + reflect[:, :1]
+#         # 1pt rgb
+#         depth = accumulate_along_rays(weights, ray_indices, values=midpoints, n_rays=n_rays)
+#         positions_1pt = rays_o + rays_d * depth
+#         color_1pt = reflect[:, :1] * self.color_network(positions_1pt) + reflect[:, :1]
 
-        comp_normal = accumulate_along_rays(weights, ray_indices, values=normal, n_rays=n_rays)
-        comp_normal = F.normalize(comp_normal, p=2, dim=-1)
+#         comp_normal = accumulate_along_rays(weights, ray_indices, values=normal, n_rays=n_rays)
+#         comp_normal = F.normalize(comp_normal, p=2, dim=-1)
 
-        out = {
-            'color_fine': color,
-            'sdf': sdf,
-            'dists': dists,
-            'mid_z_vals': midpoints,
-            'weights': weights,
-            'weight_sum': weights_sum,
-            'gradient_error': gradient_error,
-            'normal': comp_normal,
-            'color_1pt': color_1pt,
-        }
-        return out
+#         out = {
+#             'color_fine': color,
+#             'sdf': sdf,
+#             'dists': dists,
+#             'mid_z_vals': midpoints,
+#             'weights': weights,
+#             'weight_sum': weights_sum,
+#             'gradient_error': gradient_error,
+#             'normal': comp_normal,
+#             'color_1pt': color_1pt,
+#         }
+#         return out
