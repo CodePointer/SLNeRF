@@ -21,7 +21,7 @@ You can install the required packages by:
 pip install -r requirements.txt
 ```
 
-TODO: We wrote a small library called 'pointerlib' for swift developing. In the final version we will remove the reliance of this small library. For now, you still need to install the wheel file from [here]() and install that by `pip`.
+TODO: We wrote a small library called 'pointerlib' for swift developing. In the final version we will remove the reliance of this small library. For now, you still need to install the wheel file from [here](https://drive.google.com/file/d/1LqAAnYo1i-xe1Yza_p1BIU9HEEt6DDLa/view?usp=sharing) and install that by `pip`.
 
 Our code is using `python==3.8` and `torch==1.13.1`.
 
@@ -32,7 +32,7 @@ P.S: `Open3D` and `openpyxl` are only used for visualization in folder `./tools`
 
 ### Download the datasets
 
-Please download the dataset from [here](). The calibration parameters are stored in `config.ini`.
+Please download the dataset from [here](https://drive.google.com/file/d/1pnIXH4n1XVz1vCrzfvQcuuxyjCs_5Xcq/view?usp=sharing). The calibration parameters are stored in `config.ini`.
 
 Remember to update the dataset path for scripts under `./scripts` folder.
 
