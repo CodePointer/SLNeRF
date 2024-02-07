@@ -5,9 +5,13 @@ The PyTorch implementation of the 3DV 2024 paper: Depth Reconstruction with Neur
 if you find our code useful, please cite:
 
 > @inproceedings{qiao2024depth,
+> 
 >   title={Depth Reconstruction with Neural Signed Distance Fields in Structured Light Systems},
+> 
 >   booktitle={International Conference on 3D Vision},
+> 
 >   year={2024}
+> 
 > }
 
 
