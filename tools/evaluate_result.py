@@ -62,6 +62,22 @@ class Evaluator:
 
         pass
 
+    def update_visualizer(self, depth, mask, folder):
+        self.visualizer.set_depth(depth, mask)
+        if self.visualizer.depth.max() < 5.0:
+            self.visualizer.depth[:, :] = 700.0
+
+        # Check if depth2pcd or vis is needed.
+        if self.flush_flag or not (folder / 'pcd.asc').exists() or not (folder / 'vis.png').exists():
+            self.visualizer.update()
+
+            if self.flush_flag or not (folder / 'pcd.asc').exists():
+                self.visualizer.get_pcd(folder / 'pcd.asc')
+
+            # Check if depth vis is needed.
+            if self.flush_flag or not (folder / 'vis.png').exists():
+                self.visualizer.get_view(folder / 'vis.png')
+
     def evaluate_sequence(self, scene_name):
         work_sheet = self.workbook[scene_name]
         data_path = Path(work_sheet['B1'].value)
@@ -101,25 +117,19 @@ class Evaluator:
         # if self.pre_process_flag:
         #     map(self.flush_depth_est_shape, cmp_sets)
 
+        # Check gt
+        if total_row > start_row:
+            depth_gt, _, mask_gt = cmp_sets[0]
+            mask = (plb.imload(depth_gt, 10.0, flag_tensor=False) > 0.1).astype(np.float32)
+            self.update_visualizer(depth_gt, mask, depth_gt.parent)
+
         # Evaluate: column = 4,5,6,7
         for row_idx in tqdm(range(start_row, total_row)):
             depth_gt, depth_est, mask_gt = cmp_sets[row_idx - start_row]
             exp_tag = work_sheet.cell(row_idx, 1).value
             epoch_dir = Path(work_sheet.cell(row_idx, 2).value)
-            self.visualizer.set_depth(depth_est, mask_gt)
-            if self.visualizer.depth.max() < 5.0:
-                self.visualizer.depth[:, :] = 700.0
 
-            # Check if depth2pcd or vis is needed.
-            if self.flush_flag or not (epoch_dir / 'pcd.asc').exists() or not (epoch_dir / 'vis.png').exists():
-                self.visualizer.update()
-
-                if self.flush_flag or not (epoch_dir / 'pcd.asc').exists():
-                    self.visualizer.get_pcd(epoch_dir / 'pcd.asc')
-
-                # Check if depth vis is needed.
-                if self.flush_flag or not (epoch_dir / 'vis.png').exists():
-                    self.visualizer.get_view(epoch_dir / 'vis.png')
+            self.update_visualizer(depth_est, mask_gt, epoch_dir)
 
             # Evaluate here.
             res, diff, mask = self._evaluate_exp_outs(cmp_sets[row_idx - start_row])
@@ -128,6 +138,11 @@ class Evaluator:
             if self.flush_flag or not (epoch_dir / 'step_vis.png').exists():
                 step_vis = self._draw_step_vis(diff, mask)
                 plb.imsave(epoch_dir / 'step_vis.png', step_vis)
+
+            # Check if err vis is needed.
+            if self.flush_flag or not (epoch_dir / 'err_vis.png').exists():
+                err_vis = self._draw_err_vis(diff, mask)
+                plb.imsave(epoch_dir / 'err_vis.png', err_vis)
 
             # Write
             work_sheet.cell(row_idx, 4).value = float(f'{res[0] * 100.0:.2f}')
@@ -277,6 +292,11 @@ class Evaluator:
         step_vis = plb.VisualFactory.err_visual(step_err, mask, max_val=4.0, color_map=cv2.COLORMAP_WINTER)
         step_vis = cv2.cvtColor(plb.t2a(step_vis), cv2.COLOR_BGR2RGB)
         return step_vis
+
+    def _draw_err_vis(self, diff, mask):
+        err_vis = plb.VisualFactory.err_visual(diff, mask, max_val=10.0, color_map=cv2.COLORMAP_SUMMER)
+        err_vis = cv2.cvtColor(plb.t2a(err_vis), cv2.COLOR_BGR2RGB)
+        return err_vis
 
     def sum_average(self, scene_name):
         src_work_sheet = self.workbook[scene_name]
@@ -428,10 +448,13 @@ def main():
         flush_flag=False,
         pre_process_flag=True,
     )
-    app.evaluate_sequence('scene_00')
-    app.evaluate_sequence('scene_01')
-    app.evaluate_sequence('scene_02')
-    app.evaluate_sequence('scene_03')
+    app.evaluate_sequence('scene_test')
+    # app.evaluate_sequence('scene_01')
+    # app.evaluate_sequence('scene_02')
+    # app.evaluate_sequence('scene_03')
+    # app.evaluate_sequence('scene_04')
+    # app.evaluate_sequence('scene_05')
+    # app.evaluate_sequence('scene_06')
 
     # data_path = Path('C:/SLDataSet/SLNeRF/7_Dataset0531/scene_00')
     # out_path = Path('C:/SLDataSet/SLNeRF/7_Dataset0531-out/scene_00')

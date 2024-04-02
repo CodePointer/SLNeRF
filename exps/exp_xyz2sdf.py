@@ -19,7 +19,7 @@ from dataset.dataset_neus import MultiPatDataset, MultiPatDatasetUni
 from loss.loss_func import SuperviseDistLoss, NaiveLoss, SuperviseBCEMaskLoss
 
 from networks.layers import WarpFromXyz, WarpFromXyzUni, apply_4x4mat
-from networks.neus.renderer import NeuSRenderer, NeuSRendererMarching
+from networks.neus.renderer import NeuSRenderer  #, NeuSRendererMarching
 from networks.neus.fields import SDFNetwork, SingleVarianceNetwork
 
 # from networks.neus import SDFNetwork, SingleVarianceNetwork, NeuSLRenderer
