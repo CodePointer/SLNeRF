@@ -21,7 +21,7 @@ class Worker:
         self.args = args
 
         # Set random seeds
-        seed = 42
+        seed = 114514 # 42
         np.random.seed(seed)
         torch.manual_seed(seed)
         torch.cuda.manual_seed(seed)
@@ -86,7 +86,7 @@ class Worker:
 
     def init_logger(self):
         def safe_path(input_str):
-            return None if input_str is '' else Path(input_str)
+            return None if input_str == '' else Path(input_str)
 
         self.train_dir = safe_path(self.args.train_dir)
         self.test_dir = safe_path(self.args.test_dir)

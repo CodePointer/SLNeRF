@@ -1,5 +1,5 @@
 DATA_DIR="/media/qiao/Videos/SLDataSet/SLNeuS/8_Dataset0801"
-SCENE_IDX_LIST=( 05 06 )
+SCENE_IDX_LIST=( 04 05 06 )
 PAT_SET_LIST=(
     # "arr20r0,arr20r1,arr20r2"
     # "arr40r0,arr20r0,arr10r0,arr5r0"
@@ -8,7 +8,7 @@ PAT_SET_LIST=(
     # "arr20r0,arr10r0,arr5r0,arr5r0inv"
     # "arr20r0,arr20r0inv,arr10r0,arr10r0inv,arr5r0,arr5r0inv"
     # "arr20r0,arr20r0inv,arr10r0,arr10r0inv,arr5r0,arr5r0inv,arr3r0,arr3r0inv"
-    "arr20r0,arr20r1,arr20r2,arr10r0,arr10r1,arr10r2,arr5r0,arr5r1,arr5r2"
+    # "arr20r0,arr20r1,arr20r2,arr10r0,arr10r1,arr10r2,arr5r0,arr5r1,arr5r2"
     # "arr20r0,arr10r0,arr10r1,arr10r2,arr5r0,arr5r1,arr5r2"
     # "arr20r0,arr10r0,arr10r1,arr5r0,arr5r1,arr5r2"
     # "arr20r0,arr10r0,arr10r1,arr5r0,arr5r1"
@@ -16,12 +16,12 @@ PAT_SET_LIST=(
 RUN_TAG_LIST=(
     # "main_20x3"
     # "main_40_20_10_5"
-    # "main_20i_10x2_5x2"
     "main_20x2_10x2_5x2"
+    # "dyn_20x2_10x2_5x2"
     # "main_20_10_5i"
     # "main_20i_10i_5i"
     # "main_20i_10i_5i_3i"
-    "main_20x3_10x3_5x3"
+    # "dyn_20x3_10x3_5x3"
     # "main_20_10x3_5x3"
     # "main_20_10x2_5x3"
     # "main_20_10x2_5x2"

@@ -320,3 +320,23 @@ class MultiPatDatasetUni(MultiPatDataset):
             # 'pat': self.pat_set,                        # [C, Hp, Wp]
         }
         return ret
+
+
+# TODO: Finish this dataset.
+class HybridMultiPatDatasetUni(MultiPatDatasetUni):
+    def __init__(self, main_folder, scene_idx_set, pat_idx_set, ref_img_set, sample_num, calib_para, device):
+        scene_folder = main_folder / f'scene_{scene_idx_set[0]:02}'
+        super().__init__(scene_folder, pat_idx_set, ref_img_set, sample_num, calib_para, device)
+
+        # Modify the image part for dynamic situation
+        img_list = []
+        for scene_idx, pat_idx in zip(scene_idx_set, pat_idx_set):
+            img_folder = main_folder / f'scene_{scene_idx:02}' / 'img'
+            img = plb.imload(img_folder / f'img_{pat_idx}.png')
+            img_list.append(img)
+        self.img_set = torch.cat(img_list, dim=0)  # [C, H, W]
+        self.img_set = self.img_set.to(device)
+        # self.depth = plb.imload(self.depth_folder / 'depth.png', scale=10.0)  # [1, H, W]
+
+
+        pass

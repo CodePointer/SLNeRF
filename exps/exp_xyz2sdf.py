@@ -15,7 +15,7 @@ from worker.worker import Worker
 import pointerlib as plb
 
 # from dataset.multi_pat_dataset import MultiPatDataset
-from dataset.dataset_neus import MultiPatDataset, MultiPatDatasetUni
+from dataset.dataset_neus import MultiPatDataset, MultiPatDatasetUni, HybridMultiPatDatasetUni
 from loss.loss_func import SuperviseDistLoss, NaiveLoss, SuperviseBCEMaskLoss
 
 from networks.layers import WarpFromXyz, WarpFromXyzUni, apply_4x4mat
@@ -77,12 +77,27 @@ class ExpXyz2SdfWorker(Worker):
             calib_para=config['RawCalib'],
             device=self.device
         )
+        # self.pat_dataset = HybridMultiPatDatasetUni(
+        #     main_folder=self.train_dir.parent,
+        #     scene_idx_set=list(range(0, len(pat_idx_set))),
+        #     pat_idx_set=pat_idx_set,
+        #     ref_img_set=ref_img_set,
+        #     sample_num=self.sample_num,
+        #     calib_para=config['RawCalib'],
+        #     device=self.device
+        # )
         self.train_dataset = self.pat_dataset
 
         # Set pattern number
         pat_num = self.parameters['pat_num'].get_value()
         if pat_num < 0:
             self.parameters['pat_num'].value = len(pat_idx_set)
+
+        # Save input images
+        img_folder = self.res_dir / 'input' / 'img'
+        img_folder.mkdir(parents=True, exist_ok=True)
+        for i, img in enumerate(self.pat_dataset.img_set):
+            plb.imsave(img_folder / f'img_{i}.png', img, mkdir=True)
 
         self.test_dataset = []
         if self.args.exp_type == 'eval':
@@ -291,7 +306,7 @@ class ExpXyz2SdfWorker(Worker):
         if self.args.save_stone == 0:
             return False
         else:
-            return self.n_iter % self.args.save_stone == 0 or ((self.n_iter + 100) % self.args.save_stone == 0)
+            return self.n_iter % self.args.save_stone == 0  # or ((self.n_iter + 100) % self.args.save_stone == 0)
 
     def callback_save_res(self, epoch, data, net_out, dataset):
         """

@@ -6,8 +6,9 @@
 # @File:      evaluate_result.py
 # @Software:  PyCharm
 # @Description:
-#   该文件已经可以完成自动化结果输出。
+#   Automatically output the results into an Excel file.
 #   Notice the coordinate for open3d is: left x, up y, left handed.
+#   TODO: Provide an example file and script.
 
 # - Package Imports - #
 import time
@@ -403,7 +404,6 @@ def mesh_color_visualize(depth, mask, config, img_list, out_folder):
 
 
 def export_text_to_file(workbook, params):
-    # 顺序的几个
     sheet_names = ['scene_00', 'scene_01', 'scene_02', 'scene_03']
     pat_set = [7, 6, 5, 4, 3]
     row_pair = [
